@@ -101,6 +101,17 @@ struct NotchAgentStrings {
     let resetsUpdate: String
     let resetsCheckFailed: String
     let resetsHelp: String
+    let sessionsCard: String
+    let noSessions: String
+    let seeAllSessionsFormat: String
+    let background: String
+    let working: String
+    let waiting: String
+    let orphanedPorts: String
+    let orphanedPortsFormat: String
+    let orphansHint: String
+    let closeAll: String
+    let endSessionFormat: String
 
     func tokens(_ count: String) -> String { String(format: tokensFormat, count) }
     func cached(_ share: String) -> String { String(format: cachedFormat, share) }
@@ -115,6 +126,9 @@ struct NotchAgentStrings {
     func claudeLimitsStale(_ when: String) -> String { String(format: claudeLimitsStaleFormat, when) }
     func pricesFrom(_ day: String) -> String { String(format: pricesFromFormat, day) }
     func resetsExpiry(_ when: String) -> String { String(format: resetsExpiryFormat, when) }
+    func seeAllSessions(_ count: Int) -> String { String(format: seeAllSessionsFormat, String(count)) }
+    func orphanedPorts(_ count: Int) -> String { String(format: orphanedPortsFormat, String(count)) }
+    func endSession(_ name: String) -> String { String(format: endSessionFormat, name) }
 
     /// Why Claude Code could not check the account's limits.
     func claudeCode(_ failure: AgentClaudeServer.Failure) -> String {
@@ -144,6 +158,7 @@ struct NotchAgentStrings {
         case .projects: return projectsCard
         case .activity: return activityCard
         case .resets: return resetsCard
+        case .sessions: return sessionsCard
         }
     }
 
@@ -285,7 +300,18 @@ extension NotchAgentStrings {
         resetsSignIn: "Sign in to Codex with a plan to see resets",
         resetsUpdate: "Update Codex to use resets here",
         resetsCheckFailed: "Couldn’t check resets",
-        resetsHelp: "A reset renews the Codex session and weekly limits at once. Codex checks your resets with its own sign-in, which Vorssaint never reads.")
+        resetsHelp: "A reset renews the Codex session and weekly limits at once. Codex checks your resets with its own sign-in, which Vorssaint never reads.",
+        sessionsCard: "Sessions",
+        noSessions: "No agents running",
+        seeAllSessionsFormat: "See all sessions (%@)",
+        background: "Background",
+        working: "Working",
+        waiting: "Waiting",
+        orphanedPorts: "Orphaned ports",
+        orphanedPortsFormat: "Orphaned ports (%@)",
+        orphansHint: "Left listening after their session ended",
+        closeAll: "Close all",
+        endSessionFormat: "End session %@")
 
     static let uk = NotchAgentStrings(
         title: "ШІ-агенти",
@@ -384,7 +410,18 @@ extension NotchAgentStrings {
         resetsSignIn: "Увійдіть у Codex із планом, щоб бачити скидання",
         resetsUpdate: "Оновіть Codex, щоб використовувати скидання тут",
         resetsCheckFailed: "Не вдалося перевірити скидання",
-        resetsHelp: "Скидання одразу поновлює ліміти сеансу й тижня Codex. Codex перевіряє ваші скидання через власний вхід, який Vorssaint ніколи не читає.")
+        resetsHelp: "Скидання одразу поновлює ліміти сеансу й тижня Codex. Codex перевіряє ваші скидання через власний вхід, який Vorssaint ніколи не читає.",
+        sessionsCard: "Сесії",
+        noSessions: "Немає запущених агентів",
+        seeAllSessionsFormat: "Усі сесії (%@)",
+        background: "Фон",
+        working: "Працює",
+        waiting: "Чекає",
+        orphanedPorts: "Осиротілі порти",
+        orphanedPortsFormat: "Осиротілі порти (%@)",
+        orphansHint: "Залишились відкритими після завершення сесії",
+        closeAll: "Закрити всі",
+        endSessionFormat: "Завершити сесію %@")
 
     static let ptBR = NotchAgentStrings(
         title: "Agentes de IA",
@@ -483,7 +520,18 @@ extension NotchAgentStrings {
         resetsSignIn: "Entre no Codex com um plano para ver as redefinições",
         resetsUpdate: "Atualize o Codex para usar as redefinições aqui",
         resetsCheckFailed: "Não foi possível verificar as redefinições",
-        resetsHelp: "Uma redefinição renova de uma vez os limites da sessão e da semana do Codex. O Codex verifica suas redefinições com o próprio login, que o Vorssaint nunca lê.")
+        resetsHelp: "Uma redefinição renova de uma vez os limites da sessão e da semana do Codex. O Codex verifica suas redefinições com o próprio login, que o Vorssaint nunca lê.",
+        sessionsCard: "Sessões",
+        noSessions: "Nenhum agente em execução",
+        seeAllSessionsFormat: "Ver todas as sessões (%@)",
+        background: "Segundo plano",
+        working: "Trabalhando",
+        waiting: "Aguardando",
+        orphanedPorts: "Portas órfãs",
+        orphanedPortsFormat: "Portas órfãs (%@)",
+        orphansHint: "Continuam abertas após o fim da sessão",
+        closeAll: "Fechar todas",
+        endSessionFormat: "Encerrar sessão %@")
 
     static let es = NotchAgentStrings(
         title: "Agentes de IA",
@@ -582,7 +630,18 @@ extension NotchAgentStrings {
         resetsSignIn: "Inicia sesión en Codex con un plan para ver los reinicios",
         resetsUpdate: "Actualiza Codex para usar los reinicios aquí",
         resetsCheckFailed: "No se pudieron comprobar los reinicios",
-        resetsHelp: "Un reinicio renueva a la vez los límites de la sesión y de la semana de Codex. Codex comprueba tus reinicios con su propio inicio de sesión, que Vorssaint nunca lee.")
+        resetsHelp: "Un reinicio renueva a la vez los límites de la sesión y de la semana de Codex. Codex comprueba tus reinicios con su propio inicio de sesión, que Vorssaint nunca lee.",
+        sessionsCard: "Sesiones",
+        noSessions: "Ningún agente en ejecución",
+        seeAllSessionsFormat: "Ver todas las sesiones (%@)",
+        background: "Segundo plano",
+        working: "Trabajando",
+        waiting: "Esperando",
+        orphanedPorts: "Puertos huérfanos",
+        orphanedPortsFormat: "Puertos huérfanos (%@)",
+        orphansHint: "Siguen abiertos tras terminar su sesión",
+        closeAll: "Cerrar todos",
+        endSessionFormat: "Terminar sesión %@")
 
     static let sk = NotchAgentStrings(
         title: "AI agenti",
@@ -681,7 +740,18 @@ extension NotchAgentStrings {
         resetsSignIn: "Prihláste sa do Codexu s plánom, aby ste videli obnovenia",
         resetsUpdate: "Aktualizujte Codex, aby ste tu mohli používať obnovenia",
         resetsCheckFailed: "Obnovenia sa nepodarilo skontrolovať",
-        resetsHelp: "Obnovenie naraz obnoví limity relácie aj týždňa v Codexe. Codex kontroluje vaše obnovenia vlastným prihlásením, ktoré Vorssaint nikdy nečíta.")
+        resetsHelp: "Obnovenie naraz obnoví limity relácie aj týždňa v Codexe. Codex kontroluje vaše obnovenia vlastným prihlásením, ktoré Vorssaint nikdy nečíta.",
+        sessionsCard: "Relácie",
+        noSessions: "Nebeží žiadny agent",
+        seeAllSessionsFormat: "Zobraziť všetky relácie (%@)",
+        background: "Na pozadí",
+        working: "Pracuje",
+        waiting: "Čaká",
+        orphanedPorts: "Osirelé porty",
+        orphanedPortsFormat: "Osirelé porty (%@)",
+        orphansHint: "Zostali otvorené po skončení relácie",
+        closeAll: "Zavrieť všetky",
+        endSessionFormat: "Ukončiť reláciu %@")
 
     static let de = NotchAgentStrings(
         title: "KI-Agenten",
@@ -780,7 +850,18 @@ extension NotchAgentStrings {
         resetsSignIn: "Melde dich in Codex mit einem Plan an, um Zurücksetzungen zu sehen",
         resetsUpdate: "Aktualisiere Codex, um Zurücksetzungen hier zu nutzen",
         resetsCheckFailed: "Zurücksetzungen konnten nicht geprüft werden",
-        resetsHelp: "Eine Zurücksetzung erneuert das Sitzungs- und das Wochenlimit von Codex auf einmal. Codex prüft deine Zurücksetzungen mit seiner eigenen Anmeldung, die Vorssaint nie liest.")
+        resetsHelp: "Eine Zurücksetzung erneuert das Sitzungs- und das Wochenlimit von Codex auf einmal. Codex prüft deine Zurücksetzungen mit seiner eigenen Anmeldung, die Vorssaint nie liest.",
+        sessionsCard: "Sitzungen",
+        noSessions: "Keine Agenten aktiv",
+        seeAllSessionsFormat: "Alle Sitzungen anzeigen (%@)",
+        background: "Hintergrund",
+        working: "Arbeitet",
+        waiting: "Wartet",
+        orphanedPorts: "Verwaiste Ports",
+        orphanedPortsFormat: "Verwaiste Ports (%@)",
+        orphansHint: "Nach dem Ende ihrer Sitzung noch offen",
+        closeAll: "Alle schließen",
+        endSessionFormat: "Sitzung %@ beenden")
 
     static let fr = NotchAgentStrings(
         title: "Agents IA",
@@ -879,7 +960,18 @@ extension NotchAgentStrings {
         resetsSignIn: "Connectez-vous à Codex avec un forfait pour voir les réinitialisations",
         resetsUpdate: "Mettez à jour Codex pour utiliser les réinitialisations ici",
         resetsCheckFailed: "Impossible de vérifier les réinitialisations",
-        resetsHelp: "Une réinitialisation renouvelle d’un coup les limites de la session et de la semaine de Codex. Codex vérifie vos réinitialisations avec sa propre connexion, que Vorssaint ne lit jamais.")
+        resetsHelp: "Une réinitialisation renouvelle d’un coup les limites de la session et de la semaine de Codex. Codex vérifie vos réinitialisations avec sa propre connexion, que Vorssaint ne lit jamais.",
+        sessionsCard: "Sessions",
+        noSessions: "Aucun agent en cours",
+        seeAllSessionsFormat: "Voir toutes les sessions (%@)",
+        background: "Arrière-plan",
+        working: "En cours",
+        waiting: "En attente",
+        orphanedPorts: "Ports orphelins",
+        orphanedPortsFormat: "Ports orphelins (%@)",
+        orphansHint: "Toujours ouverts après la fin de leur session",
+        closeAll: "Tout fermer",
+        endSessionFormat: "Terminer la session %@")
 
     static let it = NotchAgentStrings(
         title: "Agenti IA",
@@ -978,7 +1070,18 @@ extension NotchAgentStrings {
         resetsSignIn: "Accedi a Codex con un piano per vedere i ripristini",
         resetsUpdate: "Aggiorna Codex per usare i ripristini qui",
         resetsCheckFailed: "Impossibile controllare i ripristini",
-        resetsHelp: "Un ripristino rinnova insieme i limiti della sessione e della settimana di Codex. Codex controlla i tuoi ripristini con il proprio accesso, che Vorssaint non legge mai.")
+        resetsHelp: "Un ripristino rinnova insieme i limiti della sessione e della settimana di Codex. Codex controlla i tuoi ripristini con il proprio accesso, che Vorssaint non legge mai.",
+        sessionsCard: "Sessioni",
+        noSessions: "Nessun agente in esecuzione",
+        seeAllSessionsFormat: "Mostra tutte le sessioni (%@)",
+        background: "In background",
+        working: "In lavoro",
+        waiting: "In attesa",
+        orphanedPorts: "Porte orfane",
+        orphanedPortsFormat: "Porte orfane (%@)",
+        orphansHint: "Ancora aperte dopo la fine della sessione",
+        closeAll: "Chiudi tutte",
+        endSessionFormat: "Termina sessione %@")
 
     static let ru = NotchAgentStrings(
         title: "ИИ-агенты",
@@ -1077,7 +1180,18 @@ extension NotchAgentStrings {
         resetsSignIn: "Войдите в Codex с тарифом, чтобы видеть сбросы",
         resetsUpdate: "Обновите Codex, чтобы использовать сбросы здесь",
         resetsCheckFailed: "Не удалось проверить сбросы",
-        resetsHelp: "Сброс сразу обновляет лимиты сессии и недели Codex. Codex проверяет ваши сбросы через собственный вход, который Vorssaint никогда не читает.")
+        resetsHelp: "Сброс сразу обновляет лимиты сессии и недели Codex. Codex проверяет ваши сбросы через собственный вход, который Vorssaint никогда не читает.",
+        sessionsCard: "Сессии",
+        noSessions: "Нет запущенных агентов",
+        seeAllSessionsFormat: "Все сессии (%@)",
+        background: "Фон",
+        working: "Работает",
+        waiting: "Ждёт",
+        orphanedPorts: "Осиротевшие порты",
+        orphanedPortsFormat: "Осиротевшие порты (%@)",
+        orphansHint: "Остались открытыми после завершения сессии",
+        closeAll: "Закрыть все",
+        endSessionFormat: "Завершить сессию %@")
 
     static let tr = NotchAgentStrings(
         title: "YZ Ajanları",
@@ -1176,7 +1290,18 @@ extension NotchAgentStrings {
         resetsSignIn: "Sıfırlamaları görmek için Codex’te bir planla oturum açın",
         resetsUpdate: "Sıfırlamaları burada kullanmak için Codex’i güncelleyin",
         resetsCheckFailed: "Sıfırlamalar denetlenemedi",
-        resetsHelp: "Bir sıfırlama, Codex’in oturum ve haftalık sınırlarını tek seferde yeniler. Codex sıfırlamalarınızı kendi oturum açma bilgisiyle denetler. Vorssaint bunu hiçbir zaman okumaz.")
+        resetsHelp: "Bir sıfırlama, Codex’in oturum ve haftalık sınırlarını tek seferde yeniler. Codex sıfırlamalarınızı kendi oturum açma bilgisiyle denetler. Vorssaint bunu hiçbir zaman okumaz.",
+        sessionsCard: "Oturumlar",
+        noSessions: "Çalışan aracı yok",
+        seeAllSessionsFormat: "Tüm oturumları gör (%@)",
+        background: "Arka plan",
+        working: "Çalışıyor",
+        waiting: "Bekliyor",
+        orphanedPorts: "Sahipsiz bağlantı noktaları",
+        orphanedPortsFormat: "Sahipsiz bağlantı noktaları (%@)",
+        orphansHint: "Oturumları bittikten sonra açık kaldı",
+        closeAll: "Tümünü kapat",
+        endSessionFormat: "%@ oturumunu sonlandır")
 
     static let ja = NotchAgentStrings(
         title: "AIエージェント",
@@ -1275,7 +1400,18 @@ extension NotchAgentStrings {
         resetsSignIn: "リセットを見るには、プランでCodexにサインインしてください",
         resetsUpdate: "ここでリセットを使うにはCodexをアップデートしてください",
         resetsCheckFailed: "リセットを確認できませんでした",
-        resetsHelp: "リセットを使うと、Codexのセッションと週の上限が同時に回復します。Codexは独自のサインイン情報でリセットを確認し、Vorssaintがそれを読み取ることはありません。")
+        resetsHelp: "リセットを使うと、Codexのセッションと週の上限が同時に回復します。Codexは独自のサインイン情報でリセットを確認し、Vorssaintがそれを読み取ることはありません。",
+        sessionsCard: "セッション",
+        noSessions: "実行中のエージェントはありません",
+        seeAllSessionsFormat: "すべてのセッションを表示（%@）",
+        background: "バックグラウンド",
+        working: "作業中",
+        waiting: "待機中",
+        orphanedPorts: "孤立したポート",
+        orphanedPortsFormat: "孤立したポート（%@）",
+        orphansHint: "セッション終了後も開いたままです",
+        closeAll: "すべて閉じる",
+        endSessionFormat: "セッション %@ を終了")
 
     static let ko = NotchAgentStrings(
         title: "AI 에이전트",
@@ -1374,7 +1510,18 @@ extension NotchAgentStrings {
         resetsSignIn: "초기화를 보려면 플랜으로 Codex에 로그인하세요",
         resetsUpdate: "여기서 초기화를 사용하려면 Codex를 업데이트하세요",
         resetsCheckFailed: "초기화를 확인할 수 없습니다",
-        resetsHelp: "초기화를 사용하면 Codex의 세션 및 주간 한도가 한 번에 갱신됩니다. Codex는 자체 로그인으로 초기화를 확인하며, Vorssaint는 이를 읽지 않습니다.")
+        resetsHelp: "초기화를 사용하면 Codex의 세션 및 주간 한도가 한 번에 갱신됩니다. Codex는 자체 로그인으로 초기화를 확인하며, Vorssaint는 이를 읽지 않습니다.",
+        sessionsCard: "세션",
+        noSessions: "실행 중인 에이전트 없음",
+        seeAllSessionsFormat: "모든 세션 보기(%@)",
+        background: "백그라운드",
+        working: "작업 중",
+        waiting: "대기 중",
+        orphanedPorts: "고아 포트",
+        orphanedPortsFormat: "고아 포트 (%@)",
+        orphansHint: "세션이 끝난 후에도 열려 있음",
+        closeAll: "모두 닫기",
+        endSessionFormat: "%@ 세션 종료")
 
     static let zhHans = NotchAgentStrings(
         title: "AI 智能体",
@@ -1473,7 +1620,18 @@ extension NotchAgentStrings {
         resetsSignIn: "使用套餐登录 Codex 后即可查看重置",
         resetsUpdate: "请更新 Codex 以在此使用重置",
         resetsCheckFailed: "无法检查重置",
-        resetsHelp: "一次重置会同时恢复 Codex 的会话额度和每周额度。Codex 用自己的登录信息检查你的重置，Vorssaint 从不读取这些信息。")
+        resetsHelp: "一次重置会同时恢复 Codex 的会话额度和每周额度。Codex 用自己的登录信息检查你的重置，Vorssaint 从不读取这些信息。",
+        sessionsCard: "会话",
+        noSessions: "没有运行中的代理",
+        seeAllSessionsFormat: "查看全部会话（%@）",
+        background: "后台",
+        working: "工作中",
+        waiting: "等待中",
+        orphanedPorts: "孤立端口",
+        orphanedPortsFormat: "孤立端口（%@）",
+        orphansHint: "会话结束后仍在监听",
+        closeAll: "全部关闭",
+        endSessionFormat: "结束会话 %@")
 
     static let zhTW = NotchAgentStrings(
         title: "AI 代理",
@@ -1572,7 +1730,18 @@ extension NotchAgentStrings {
         resetsSignIn: "使用方案登入 Codex 後即可查看重設",
         resetsUpdate: "請更新 Codex 以在此使用重設",
         resetsCheckFailed: "無法檢查重設",
-        resetsHelp: "一次重設會同時恢復 Codex 的工作階段額度和每週額度。Codex 用自己的登入資訊檢查你的重設，Vorssaint 從不讀取這些資訊。")
+        resetsHelp: "一次重設會同時恢復 Codex 的工作階段額度和每週額度。Codex 用自己的登入資訊檢查你的重設，Vorssaint 從不讀取這些資訊。",
+        sessionsCard: "工作階段",
+        noSessions: "沒有執行中的代理程式",
+        seeAllSessionsFormat: "檢視所有工作階段（%@）",
+        background: "背景",
+        working: "工作中",
+        waiting: "等待中",
+        orphanedPorts: "孤立連接埠",
+        orphanedPortsFormat: "孤立連接埠（%@）",
+        orphansHint: "工作階段結束後仍在監聽",
+        closeAll: "全部關閉",
+        endSessionFormat: "結束工作階段 %@")
 
     static let zhHK = NotchAgentStrings(
         title: "AI 代理",
@@ -1671,5 +1840,16 @@ extension NotchAgentStrings {
         resetsSignIn: "使用計劃登入 Codex 後即可查看重設",
         resetsUpdate: "請更新 Codex 以在此使用重設",
         resetsCheckFailed: "無法檢查重設",
-        resetsHelp: "一次重設會同時恢復 Codex 的工作階段額度和每週額度。Codex 用自己的登入資料檢查你的重設，Vorssaint 從不讀取這些資料。")
+        resetsHelp: "一次重設會同時恢復 Codex 的工作階段額度和每週額度。Codex 用自己的登入資料檢查你的重設，Vorssaint 從不讀取這些資料。",
+        sessionsCard: "工作階段",
+        noSessions: "沒有執行中的代理程式",
+        seeAllSessionsFormat: "檢視所有工作階段（%@）",
+        background: "背景",
+        working: "工作中",
+        waiting: "等待中",
+        orphanedPorts: "孤立連接埠",
+        orphanedPortsFormat: "孤立連接埠（%@）",
+        orphansHint: "工作階段結束後仍在監聽",
+        closeAll: "全部關閉",
+        endSessionFormat: "結束工作階段 %@")
 }

@@ -18,6 +18,10 @@ struct NotchAgentsView: View {
     @AppStorage(DefaultsKey.notchAgentsCodex) private var codex = true
     @AppStorage(DefaultsKey.notchAgentsOpenCode) private var opencode = true
     @AppStorage(DefaultsKey.notchAgentsCopilot) private var copilot = true
+    /// Swaps the cards for every session running, from the Sessions card.
+    @State private var showsAllSessions = false
+    /// Whether this view has asked the service to scan, which it must undo once.
+    @State private var watching = false
 
     private var text: NotchAgentStrings { FeatureStrings.notchAgents(l10n.language) }
     private var chosenPeriod: AgentPeriod { AgentPeriod(rawValue: period) ?? .today }
@@ -29,11 +33,15 @@ struct NotchAgentsView: View {
         return NotchAgentSupport.showsCodexAccounts() ? accounts.states : []
     }
 
+    /// The agents the person follows, whether or not they left anything here.
+    private var followed: [AgentProvider] {
+        [claude ? AgentProvider.claude : nil, codex ? .codex : nil, opencode ? .opencode : nil, copilot ? .copilot : nil].compactMap { $0 }
+    }
+
     /// Only agents that left something on this Mac, or whose accounts were
     /// added, get cards.
     private var providers: [AgentProvider] {
-        [claude ? AgentProvider.claude : nil, codex ? .codex : nil, opencode ? .opencode : nil, copilot ? .copilot : nil].compactMap { $0 }
-            .filter { usage.snapshot.seen.contains($0) || ($0 == .codex && !codexAccounts.isEmpty) }
+        followed.filter { usage.snapshot.seen.contains($0) || ($0 == .codex && !codexAccounts.isEmpty) }
     }
 
     private var rows: [[NotchAgentTile]] {
@@ -44,9 +52,21 @@ struct NotchAgentsView: View {
                                       width: size.width)
     }
 
+    /// Processes are scanned only while the Sessions card or the full list shows.
+    private var watchesSessions: Bool {
+        if showsAllSessions { return !preview }
+        return !preview && (usage.snapshot.loaded || !codexAccounts.isEmpty) && !providers.isEmpty
+            && rows.joined().contains { $0.card == .sessions }
+    }
+
     var body: some View {
         Group {
-            if !usage.snapshot.loaded && codexAccounts.isEmpty {
+            if showsAllSessions && !preview {
+                NotchAgentSessionsList(size: size, providers: followed, text: text)
+                    .notchBand(leading: {
+                        NotchBandBackButton(title: text.sessionsCard) { showsAllSessions = false }
+                    })
+            } else if !usage.snapshot.loaded && codexAccounts.isEmpty {
                 VStack(spacing: 10) {
                     ProgressView().controlSize(.small)
                     Text(text.loading).font(.system(size: 11)).foregroundStyle(.secondary)
@@ -78,12 +98,27 @@ struct NotchAgentsView: View {
         .onAppear {
             usage.pageDidAppear(preview: preview)
             accounts.pageDidAppear(preview: preview)
+            syncSessions()
         }
+        .onChange(of: watchesSessions) { _, _ in syncSessions() }
         .onDisappear {
             guard !preview else { return }
             usage.pageDidDisappear()
             accounts.pageDidDisappear()
+            setWatching(false)
+            showsAllSessions = false
         }
+    }
+
+    private func syncSessions() {
+        guard !preview else { return }
+        setWatching(watchesSessions)
+    }
+
+    private func setWatching(_ watches: Bool) {
+        guard watches != watching else { return }
+        watching = watches
+        if watches { AgentSessionsService.shared.pageDidAppear() } else { AgentSessionsService.shared.pageDidDisappear() }
     }
 
     private var periodMenu: some View {
@@ -132,6 +167,8 @@ struct NotchAgentsView: View {
             NotchAgentActivityCard(snapshot: snapshot, text: text)
         case .resets:
             NotchAgentResetsCard(now: now, text: text, showsDefaultAccount: tile.namesDefaultAccount)
+        case .sessions:
+            NotchAgentSessionsCard(providers: followed, text: text, preview: preview) { showsAllSessions = true }
         }
     }
 
@@ -153,7 +190,7 @@ struct NotchAgentsView: View {
     }
 }
 
-private struct NotchAgentChip: View {
+struct NotchAgentChip: View {
     let text: String
     var tint: Color = .white
 

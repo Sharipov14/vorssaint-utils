@@ -7,7 +7,7 @@ import Foundation
 /// The cards the AI page can show, in the order a person arranges them. Raw
 /// values are stored in the saved order, so cases are never renamed.
 enum NotchAgentCard: String, CaseIterable, Identifiable {
-    case limits, spend, live, trend, models, projects, activity, resets
+    case limits, spend, live, trend, models, projects, activity, resets, sessions
 
     var id: String { rawValue }
 
@@ -21,11 +21,12 @@ enum NotchAgentCard: String, CaseIterable, Identifiable {
         case .projects: return "folder"
         case .activity: return "square.grid.3x3.fill"
         case .resets: return "arrow.counterclockwise.circle"
+        case .sessions: return "terminal"
         }
     }
 
-    /// Charts need the island's width; everything else pairs up.
-    var fullWidth: Bool { self == .trend || self == .activity }
+    /// Charts and the session list need the island's width; everything else pairs up.
+    var fullWidth: Bool { self == .trend || self == .activity || self == .sessions }
 
     /// Cards that cover the period chosen in the island's top row.
     var followsPeriod: Bool { self == .spend || self == .trend || self == .models || self == .projects }
@@ -253,6 +254,8 @@ enum NotchAgentSupport {
     static let spacing: CGFloat = 10
     static let cardHeight: CGFloat = 96
     static let chartHeight: CGFloat = 118
+    /// Three sessions and the button to the rest.
+    static let sessionsHeight: CGFloat = 132
     /// An account card also says when it was checked, and the Resets card
     /// beside account cards names the account its resets belong to.
     static let accountCardHeight: CGFloat = 116
@@ -303,6 +306,7 @@ enum NotchAgentSupport {
     }
 
     static func height(of row: [NotchAgentTile]) -> CGFloat {
+        if row.contains(where: { $0.card == .sessions }) { return sessionsHeight }
         if row.contains(where: \.card.fullWidth) { return chartHeight }
         return row.contains { $0.accountID != nil || $0.namesDefaultAccount } ? accountCardHeight : cardHeight
     }
