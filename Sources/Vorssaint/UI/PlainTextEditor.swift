@@ -59,6 +59,9 @@ struct PlainTextEditor: NSViewRepresentable {
     /// Command-Return, which the caller takes for its own: the pad turns it into
     /// the formatted reading.
     var onCommandReturn: (() -> Void)?
+    /// Return alone, for a field that sends what was typed; Shift-Return then
+    /// adds the line.
+    var onReturn: (() -> Void)?
     /// False while the editor sits under something else, as the pad's
     /// formatted reading covers it: it is then hidden, so its text cursor
     /// does not show over what is on top.
@@ -75,6 +78,7 @@ struct PlainTextEditor: NSViewRepresentable {
          completesTaskBoxes: Bool = false,
          continuesLists: Bool = false,
          onCommandReturn: (() -> Void)? = nil,
+         onReturn: (() -> Void)? = nil,
          isActive: Bool = true,
          onCreate: ((NSTextView) -> Void)? = nil) {
         self._text = text
@@ -86,6 +90,7 @@ struct PlainTextEditor: NSViewRepresentable {
         self.completesTaskBoxes = completesTaskBoxes
         self.continuesLists = continuesLists
         self.onCommandReturn = onCommandReturn
+        self.onReturn = onReturn
         self.isActive = isActive
         self.onCreate = onCreate
     }
@@ -128,6 +133,7 @@ struct PlainTextEditor: NSViewRepresentable {
         context.coordinator.completesTaskBoxes = completesTaskBoxes
         context.coordinator.continuesLists = continuesLists
         context.coordinator.onCommandReturn = onCommandReturn
+        context.coordinator.onReturn = onReturn
         context.coordinator.installLineMoveMonitor(for: textView)
         onCreate?(textView)
         return scroll
@@ -141,6 +147,7 @@ struct PlainTextEditor: NSViewRepresentable {
         guard let textView = nsView.documentView as? NSTextView else { return }
         context.coordinator.continuesLists = continuesLists
         context.coordinator.onCommandReturn = onCommandReturn
+        context.coordinator.onReturn = onReturn
         // Hidden, not disabled: it keeps its text and undo history, and can
         // still be cleared through, but a hidden view has no cursor rects.
         if nsView.isHidden == isActive { nsView.isHidden = !isActive }
@@ -172,6 +179,7 @@ struct PlainTextEditor: NSViewRepresentable {
         var completesTaskBoxes = false
         var continuesLists = false
         var onCommandReturn: (() -> Void)?
+        var onReturn: (() -> Void)?
         private weak var textView: NSTextView?
         private var lineMoveMonitor: Any?
 
@@ -199,6 +207,10 @@ struct PlainTextEditor: NSViewRepresentable {
                     }
                     if flags == .command, let onCommandReturn = self.onCommandReturn {
                         onCommandReturn()
+                        return nil
+                    }
+                    if flags.isEmpty, let onReturn = self.onReturn {
+                        onReturn()
                         return nil
                     }
                 }

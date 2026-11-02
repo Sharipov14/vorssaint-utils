@@ -157,6 +157,7 @@ Reorder or hide panel sections, choose a compact layout, and export settings to 
 - **Quick toggles.** Switch appearance, hide desktop icons, eject disks, empty the Trash, lock the screen and more.
 - **Quit apps.** See every open app in one list and quit them one by one, all at once or all but the one in front.
 - **Radial menu.** Open a customizable wheel of apps, files, shortcuts and tools around the pointer, with profiles and submenus.
+- **Translate.** Translate text in the Dynamic Island as you type, on your Mac with Apple's models, or with DeepL, Google Cloud, LibreTranslate or any OpenAI-compatible server, a local model included. The language is detected for you, and a history keeps what you translated.
 - **Scratchpad.** Keep autosaved notes in tabs, with Markdown preview and export, in a floating window or Dynamic Island.
 - **Cleaning Mode.** Lock keyboard input while cleaning, with a black screen or a small visible indicator.
 

@@ -1164,6 +1164,7 @@ final class NotchService: ObservableObject {
         // A watch keeps reading while the island is away, as on the lock
         // screen, and says so with a notification if it cannot show itself.
         NotchWatchService.shared.syncWithPreferences()
+        NotchTranslateService.shared.syncShortcut()
         // Requested file work can continue while locked, but disabling its
         // feature must still cancel it before presentation resumes.
         NotchFileToolsService.shared.syncWithPreferences()
@@ -1278,6 +1279,7 @@ final class NotchService: ObservableObject {
     func stop(restoreCapture: Bool = true) {
         preferenceSyncWork?.cancel(); preferenceSyncWork = nil
         hotkey.unregister()
+        NotchTranslateService.shared.suspendShortcut()
         if shortcutRegistrationFailed { shortcutRegistrationFailed = false }
         NotchLyricsService.shared.stop()
         NotchFileToolsService.shared.stop()
@@ -1953,6 +1955,15 @@ final class NotchService: ObservableObject {
            selectedMetric == nil, let panel, panel.isKeyWindow || NSApp.keyWindow === panel { collapse() }
         else { open(.scratchpad) }
         return true
+    }
+
+    /// Opens the island on the translator with the caret in its text; a
+    /// second press while it has the keyboard closes it, as the pad does.
+    func showTranslate(toggle: Bool = false) {
+        guard NotchSupport.routesTranslate(), acceptsUserInteraction else { return }
+        if toggle, expanded, selected == .translate, !showingAppPanel, !showingSections, !showingCommandBar,
+           selectedMetric == nil, let panel, panel.isKeyWindow || NSApp.keyWindow === panel { collapse() }
+        else { open(.translate) }
     }
 
     func openAppPanel(toggle: Bool = false) {
