@@ -736,7 +736,9 @@ private struct NotchAgentSessionRow: View {
     private static let radius: CGFloat = 14
     private static let inset: CGFloat = 12
     private static let glyphSize: CGFloat = 11
-    private static let hostWidth: CGFloat = 90
+    private static let hostWidth: CGFloat = 100
+    /// The host's name past this many characters ends in an ellipsis.
+    private static let hostNameLimit = 12
     private static let column: CGFloat = 10
     private static let firstRow: CGFloat = 18
     private static let secondRow: CGFloat = 15
@@ -964,7 +966,10 @@ private struct NotchAgentSessionRow: View {
                 } else {
                     Image(systemName: "terminal").font(.system(size: 12)).frame(width: 18, height: 18)
                 }
-                Text(host.name).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                Text(AgentActivitySupport.line(host.name, limit: Self.hostNameLimit) ?? host.name)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
             .help(host.name)
         } else {
