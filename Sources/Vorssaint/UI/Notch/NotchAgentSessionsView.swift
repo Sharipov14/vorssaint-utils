@@ -986,8 +986,11 @@ struct NotchAgentDiffView: View {
                     Spacer(minLength: 4)
                     NotchAgentDiffCounts(added: file.added, removed: file.removed)
                 }
+                // ponytail: eager, like the Features page (3af8cf3d): a lazy stack
+                // re-estimated the lines below the fold while scrolling and left
+                // black gaps. The diff stops at diffLineLimit lines.
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
+                    VStack(alignment: .leading, spacing: 0) {
                         ForEach(file.hunks.indices, id: \.self) { index in
                             if index > 0 {
                                 Text("\u{22EF}").font(.system(size: 9)).foregroundStyle(.tertiary).padding(.vertical, 2)
