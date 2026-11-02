@@ -22,6 +22,38 @@ struct AgentDiffTarget: Equatable {
     let path: String
 }
 
+extension AgentSessionsService {
+    /// The name Claude gave the session asking, or its folder.
+    func title(of approval: AgentApproval) -> String {
+        let named = approval.session.flatMap { id in
+            sessions.first { $0.log?.hasSuffix("/\(id).jsonl") == true }?.title
+        }
+        if let named, !named.isEmpty { return named }
+        return approval.folder.isEmpty ? AgentProvider.claude.displayName : approval.folder
+    }
+}
+
+/// Claude's requests on their own while it asks a question: the open island
+/// shows them as a notification's card, and nothing else.
+struct NotchAgentRequests: View {
+    @ObservedObject private var approvals = AgentApprovalService.shared
+    @ObservedObject private var sessions = AgentSessionsService.shared
+    @ObservedObject private var l10n = L10n.shared
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        let text = FeatureStrings.notchAgents(l10n.language)
+        VStack(spacing: NotchAgentSupport.spacing) {
+            ForEach(approvals.pending) { approval in
+                NotchAgentApprovalCard(approval: approval, title: sessions.title(of: approval), text: text)
+                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
+            }
+        }
+        .animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.86), value: approvals.pending)
+        .environment(\.locale, l10n.language.formattingLocale())
+    }
+}
+
 /// The Live tab: every agent running, and the ports its processes left open.
 struct NotchAgentSessionsList: View {
     let size: CGSize
@@ -66,7 +98,7 @@ struct NotchAgentSessionsList: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: NotchAgentSupport.spacing) {
                         ForEach(pending) { approval in
-                            NotchAgentApprovalCard(approval: approval, title: title(of: approval), text: text)
+                            NotchAgentApprovalCard(approval: approval, title: service.title(of: approval), text: text)
                                 .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
                         }
                         if !sessions.isEmpty {
@@ -82,9 +114,6 @@ struct NotchAgentSessionsList: View {
                         if !orphans.isEmpty { self.orphans }
                     }
                     .animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.86), value: pending)
-                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
-                        if !preview { NotchService.shared.updateAgentListHeight(height) }
-                    }
                 }
                 .scrollIndicators(.automatic)
             }
@@ -92,15 +121,6 @@ struct NotchAgentSessionsList: View {
         .frame(width: size.width, height: size.height, alignment: .top)
         // A file whose session ended has nothing left to show.
         .onChange(of: opened == nil) { _, gone in if gone { diff = nil } }
-    }
-
-    /// The name Claude gave the session asking, or its folder.
-    private func title(of approval: AgentApproval) -> String {
-        let named = approval.session.flatMap { id in
-            service.sessions.first { $0.log?.hasSuffix("/\(id).jsonl") == true }?.title
-        }
-        if let named, !named.isEmpty { return named }
-        return approval.folder.isEmpty ? AgentProvider.claude.displayName : approval.folder
     }
 
     /// No agent runs: when each last worked.

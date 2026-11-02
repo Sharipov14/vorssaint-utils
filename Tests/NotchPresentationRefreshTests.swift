@@ -189,6 +189,7 @@ enum NotchPresentationRefreshContract {
         var showingSections = false
         var showingAppPanel = false
         var showingCommandBar = false
+        var showsAgentRequests = false
         var commandBarClosings = 0
         func commandBarDidClose() { commandBarClosings += 1 }
         func flushMascotReaction() {}

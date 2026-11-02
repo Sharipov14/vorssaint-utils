@@ -218,26 +218,6 @@ final class AgentApprovalService: ObservableObject {
     private func hold(_ approval: AgentApproval, fd: Int32, peer: pid_t, trail: AgentApprovalTrail?) {
         let island = NotchService.shared
         let wasExpanded = island.expanded, wasPinned = island.pinned
-        if listener != nil, pending.count < AgentApprovalSupport.pendingLimit {
-            // Pinned, so the card waits for the click; unfocused, so typing goes on.
-            island.open(.agents, pinned: true, takeFocus: false)
-        }
-        // An island that cannot show, locked or away, leaves it to the terminal.
-        guard listener != nil, pending.count < AgentApprovalSupport.pendingLimit,
-              island.expanded, island.selected == .agents else {
-            Self.send(nil, to: fd)
-            close(fd)
-            return
-        }
-        if pending.isEmpty {
-            opened = !wasExpanded
-            pinned = !wasPinned
-        }
-        // Readable again only once curl is gone: Claude stopped waiting.
-        let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: .main)
-        source.setEventHandler { [weak self] in self?.answer(approval.id, allow: nil) }
-        source.setCancelHandler { close(fd) }
-        connections[approval.id] = (source, fd)
         var approval = approval
         if peer > 0, let app = ResponsibleProcess.regularAppOwner(of: peer) {
             // "Visual Studio Code", where the running app calls itself "Code".
@@ -246,7 +226,29 @@ final class AgentApprovalService: ObservableObject {
             // Read while curl still runs: it shares Claude's terminal.
             approval.tty = AgentSessionsService.terminal(near: peer)
         }
-        pending.append(approval)
+        let room = listener != nil && pending.count < AgentApprovalSupport.pendingLimit
+        if room {
+            // In first, so the island opens at the size a question takes.
+            pending.append(approval)
+            // Pinned, so the card waits for the click; unfocused, so typing goes on.
+            island.open(.agents, pinned: true, takeFocus: false)
+        }
+        // An island that cannot show, locked or away, leaves it to the terminal.
+        guard room, island.expanded, island.selected == .agents else {
+            pending.removeAll { $0.id == approval.id }
+            Self.send(nil, to: fd)
+            close(fd)
+            return
+        }
+        if pending.count == 1 {
+            opened = !wasExpanded
+            pinned = !wasPinned
+        }
+        // Readable again only once curl is gone: Claude stopped waiting.
+        let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: .main)
+        source.setEventHandler { [weak self] in self?.answer(approval.id, allow: nil) }
+        source.setCancelHandler { close(fd) }
+        connections[approval.id] = (source, fd)
         source.resume()
         if let trail {
             let id = approval.id
@@ -262,7 +264,7 @@ final class AgentApprovalService: ObservableObject {
         }
     }
 
-    /// A question waits; the island makes room for it.
+    /// A question waits; the island shows it on its own.
     var asking: Bool { pending.contains(where: \.isQuestion) }
 
     /// Claude's questions answered, a pick list each, the card saying so a moment.
@@ -320,13 +322,14 @@ final class AgentApprovalService: ObservableObject {
     private func remove(_ id: UUID) {
         guard let gone = pending.first(where: { $0.id == id }) else { return }
         pending.removeAll { $0.id == id }
-        // The room a question took is given back.
-        if gone.isQuestion { NotchService.shared.refreshPresentation() }
-        guard pending.isEmpty else { return }
         let island = NotchService.shared
-        if opened { island.collapse() } else if pinned { island.pinned = false }
-        opened = false
-        pinned = false
+        if pending.isEmpty {
+            if opened { island.collapse() } else if pinned { island.pinned = false }
+            opened = false
+            pinned = false
+        }
+        // The page behind a question comes back.
+        if gone.isQuestion, island.expanded { island.refreshPresentation() }
     }
 
     private static func send(_ allow: Bool?, rules: NSArray? = nil, asked: NSArray? = nil, answers: [String: Any]? = nil,

@@ -10,6 +10,8 @@ struct NotchView: View {
     @ObservedObject private var music = NotchMusicService.shared
     @ObservedObject private var launcher = QuickLauncherService.shared
     @ObservedObject private var updates = UpdateService.shared
+    /// A question from Claude takes the open island for itself.
+    @ObservedObject private var approvals = AgentApprovalService.shared
     @AppStorage(DefaultsKey.notchLiquidGlassEnabled) private var glass = false
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -100,6 +102,8 @@ struct NotchView: View {
         } else if service.expanded {
             if service.showingCommandBar {
                 commandBarPage
+            } else if service.showsAgentRequests {
+                agentRequestPage
             } else {
                 expanded
             }
@@ -266,6 +270,19 @@ struct NotchView: View {
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { service.updateCommandBarHeight($0) }
             .padding(.top, service.geometry.safeContentTop)
             .frame(width: service.surfaceSize.width, height: service.surfaceSize.height, alignment: .top)
+    }
+
+    /// Claude's requests on their own below the camera, as a notification's
+    /// card, and the island as tall as they are.
+    private var agentRequestPage: some View {
+        NotchAgentRequests()
+            .fixedSize(horizontal: false, vertical: true)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { service.updateAgentRequestHeight($0) }
+            .padding(.horizontal, NotchLayout.horizontalInset)
+            .padding(.top, service.geometry.safeContentTop)
+            .frame(width: service.surfaceSize.width, height: service.surfaceSize.height, alignment: .top)
+            .clipped()
+            .focusEffectDisabled(!service.showsKeyboardFocus)
     }
 
     private var showsDetail: Bool { service.showingAppPanel || service.selectedMetric != nil }

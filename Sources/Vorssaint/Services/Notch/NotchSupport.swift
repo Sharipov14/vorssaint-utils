@@ -2662,6 +2662,12 @@ struct NotchGeometry: Equatable {
         let height = safeContentTop + max(0, contentHeight) + NotchLayout.bottomInset
         return CGSize(width: notificationPreviewWidth, height: min(height, screen.height - 48))
     }
+    /// Claude's question opens as a card of its own, a little wider than the
+    /// island's pages and as tall as it is, so nothing scrolls.
+    func agentRequestSize(contentHeight: CGFloat) -> CGSize {
+        let height = safeContentTop + max(0, contentHeight) + NotchLayout.bottomInset
+        return CGSize(width: min(expandedWidth + 40, screen.width - 24), height: min(height, screen.height - 48))
+    }
     var peek: CGSize {
         CGSize(width: min(screen.width - 24, max(cameraWidth + 110, 340)), height: safeContentTop + 52)
     }
@@ -2738,7 +2744,7 @@ struct NotchGeometry: Equatable {
                       fileMediaHeight: CGFloat? = nil, systemCards: Int = 6, toolCount: Int? = 8,
                       capturePreviewHeight: CGFloat? = nil,
                       timerHasSession: Bool = false, timerMode: NotchTimerMode = .timer,
-                      agentsHeight: CGFloat? = nil, agentsAsking: Bool = false) -> CGSize {
+                      agentsHeight: CGFloat? = nil) -> CGSize {
         let budget = contentBudget
         let showsCapturePreview = module == .captures && !detail && capturePreviewHeight != nil
         let showsFileMedia = module == .files && !detail && fileMediaHeight != nil
@@ -2789,9 +2795,7 @@ struct NotchGeometry: Equatable {
                 contentHeight = min(budget, NotchLayout.timer(mode: timerMode, hasSession: timerHasSession, height: budget))
             case .agents:
                 // Only the cards a person chose; a short set leaves a short island.
-                // A question Claude asks gets a readable page, as a detail does.
-                contentHeight = min(agentsAsking ? pageBudget : budget,
-                                    agentsHeight.map { $0 > 0 ? $0 : NotchLayout.emptyHeight } ?? budget)
+                contentHeight = min(budget, agentsHeight.map { $0 > 0 ? $0 : NotchLayout.emptyHeight } ?? budget)
             // Lists and previews fill the chosen content budget.
             case .mixer, .calendar, .clipboard, .captures, .files, .notifications, .downloads, .camera, .scratchpad, .watch:
                 contentHeight = budget

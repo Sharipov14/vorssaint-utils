@@ -166,8 +166,8 @@ final class NotchService: ObservableObject {
     @Published private var captureContentHeight: CGFloat?
     /// Kept after closing, so the next Fan Control detail opens at its size.
     @Published private var fanDetailHeight: CGFloat?
-    /// The Live tab's cards, measured; the island makes room for them while Claude asks a question.
-    private var agentListHeight: CGFloat?
+    /// Claude's requests shown on their own, measured.
+    @Published private var agentRequestHeight: CGFloat?
     @Published private(set) var power = PowerReading()
     @Published private var musicDetailVisible = false
 
@@ -874,29 +874,13 @@ final class NotchService: ObservableObject {
                                      timerMode: NotchTimerService.shared.session.hasSession
                                         ? NotchTimerService.shared.session.mode : NotchTimerSupport.savedMode(),
                                      agentsHeight: module == .agents && !detail && !panel
-                                        ? agentsContentHeight(width: geometry.contentWidth) : nil,
-                                     agentsAsking: AgentApprovalService.shared.asking)
-    }
-
-    /// A question Claude asks makes room for itself, its choices and all.
-    private func agentsContentHeight(width: CGFloat) -> CGFloat? {
-        let cards = agentCardsHeight(width: width)
-        guard AgentApprovalService.shared.asking, let agentListHeight else { return cards }
-        return max(cards ?? 0, agentListHeight)
-    }
-
-    func updateAgentListHeight(_ height: CGFloat) {
-        guard height.isFinite, height > 0 else { return }
-        let measured = ceil(height)
-        guard agentListHeight != measured else { return }
-        agentListHeight = measured
-        if AgentApprovalService.shared.asking { refreshPresentation() }
+                                        ? agentsContentHeight(width: geometry.contentWidth) : nil)
     }
 
     /// The AI page is as tall as the cards it shows, and never shorter than its
     /// Live tab needs; nil while the logs are first read, when the page fills
     /// the island with its progress.
-    private func agentCardsHeight(width: CGFloat) -> CGFloat? {
+    private func agentsContentHeight(width: CGFloat) -> CGFloat? {
         let usage = AgentUsageService.shared.snapshot
         let enabled = NotchAgentSupport.providers()
         // Added Codex accounts have cards before, or without, any log.
@@ -971,7 +955,11 @@ final class NotchService: ObservableObject {
             }
             return captureControlsLayout.size
         }
-        if expanded { return showingCommandBar ? commandBarSurfaceSize : expandedSize }
+        if expanded {
+            if showingCommandBar { return commandBarSurfaceSize }
+            if showsAgentRequests { return geometry.agentRequestSize(contentHeight: agentRequestHeight ?? geometry.pageBudget) }
+            return expandedSize
+        }
         if dragPlaceholder { return CGSize(width: geometry.peek.width, height: geometry.safeContentTop + 66) }
         if let notice {
             guard noticeExpanded else { return geometry.noticeSize(wings: notice.wings(in: geometry)) }
@@ -1002,6 +990,14 @@ final class NotchService: ObservableObject {
         guard !geometry.floats, !fullscreenCompact, captureControls == nil, !expanded, !dragPlaceholder else { return 0 }
         if let notice { return noticeExpanded ? 0 : geometry.noticeShift(notice.wings(in: geometry)) }
         return namedMusicWings.map { ($0.trailing - $0.leading) / 2 } ?? 0
+    }
+
+    /// A question from Claude opens the AI page as a notification would: its
+    /// card alone, with nothing else on screen. A permission request alone
+    /// stays among the sessions.
+    var showsAgentRequests: Bool {
+        expanded && selected == .agents && !showingCommandBar && !showingSections && !showingAppPanel
+            && selectedMetric == nil && AgentApprovalService.shared.asking
     }
 
     /// The open island around the Command Bar: the bar's width within the
@@ -2735,7 +2731,8 @@ final class NotchService: ObservableObject {
         presented.surfaceShift = surfaceShift
         windowHost?.present(size: size, geometry: presented, animated: animated,
                             transitionContent: contentTransition,
-                            quickAccess: expanded && captureControls == nil && !showingCommandBar && !access.buttons.isEmpty
+                            quickAccess: expanded && captureControls == nil && !showingCommandBar && !showsAgentRequests
+                                && !access.buttons.isEmpty
                                 ? access : nil,
                             revealFromHidden: !hiddenInFullscreen && captureControls == nil
                                 && UserDefaults.standard.bool(forKey: DefaultsKey.notchHideUntilHover)
@@ -3890,8 +3887,11 @@ final class NotchService: ObservableObject {
             // drops the candidate; the island takes the next one.
             if event.type == .keyDown, event.window === self.panel, event.keyCode == 53,
                (self.panel?.firstResponder as? NSTextView)?.hasMarkedText() == true { return event }
-            // The Command Bar inside the island reads its own keys, Escape included.
-            if event.type == .keyDown, event.window === self.panel, self.showingCommandBar { return event }
+            // The Command Bar inside the island reads its own keys, Escape
+            // included, as a question's typed answer does.
+            if event.type == .keyDown, event.window === self.panel, self.showingCommandBar || self.showsAgentRequests {
+                return event
+            }
             if event.type == .keyDown, event.window === self.panel, self.captureControls == nil {
                 let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
                 if modifiers == .command, event.charactersIgnoringModifiers?.lowercased() == "k" {
@@ -5229,6 +5229,19 @@ extension NotchService {
         commandBarHeight = nil
         measuredCommandBarHeight = nil
         CommandBarService.shared.islandDidClose()
+    }
+
+    /// Claude's question is as tall as its card, measured as it changes.
+    func updateAgentRequestHeight(_ height: CGFloat) {
+        guard height.isFinite, height > 0 else { return }
+        let measured = ceil(height)
+        // On the next turn, as the Command Bar's height: a resize asked for
+        // while SwiftUI measures reaches the screen late.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.agentRequestHeight != measured else { return }
+            self.agentRequestHeight = measured
+            if self.showsAgentRequests { self.refreshPresentation() }
+        }
     }
 
     func updateCommandBarHeight(_ height: CGFloat) {
