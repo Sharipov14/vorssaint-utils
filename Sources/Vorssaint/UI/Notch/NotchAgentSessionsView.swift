@@ -65,8 +65,8 @@ struct NotchAgentSessionsList: View {
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: NotchAgentSupport.spacing) {
-                        ForEach(pending) {
-                            NotchAgentApprovalCard(approval: $0, text: text)
+                        ForEach(pending) { approval in
+                            NotchAgentApprovalCard(approval: approval, title: title(of: approval), text: text)
                                 .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
                         }
                         if !sessions.isEmpty {
@@ -89,6 +89,15 @@ struct NotchAgentSessionsList: View {
         .frame(width: size.width, height: size.height, alignment: .top)
         // A file whose session ended has nothing left to show.
         .onChange(of: opened == nil) { _, gone in if gone { diff = nil } }
+    }
+
+    /// The name Claude gave the session asking, or its folder.
+    private func title(of approval: AgentApproval) -> String {
+        let named = approval.session.flatMap { id in
+            service.sessions.first { $0.log?.hasSuffix("/\(id).jsonl") == true }?.title
+        }
+        if let named, !named.isEmpty { return named }
+        return approval.folder.isEmpty ? AgentProvider.claude.displayName : approval.folder
     }
 
     /// No agent runs: when each last worked.
@@ -150,81 +159,253 @@ struct NotchAgentSessionsList: View {
     }
 }
 
-/// A tool call Claude waits to have allowed, until the bar runs out and the
-/// terminal asks instead. Answered there, it says so for a moment.
+/// A tool call Claude waits to have allowed, until the line along its foot
+/// runs out and the terminal asks instead. Answered, here or elsewhere, it
+/// says so a moment, the companion reacting, then goes.
 private struct NotchAgentApprovalCard: View {
     let approval: AgentApproval
+    /// The name Claude gave the session, or its folder.
+    let title: String
     let text: NotchAgentStrings
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The state badge pops in once the card is in.
+    @State private var popped = false
 
-    private var title: String { text.approval(AgentProvider.claude.displayName, tool: approval.tool) }
+    /// Only Claude asks for now.
+    private let agent = AgentProvider.claude
+    private static let amber = Color(red: 1, green: 0.62, blue: 0.22)
+    private static let radius: CGFloat = 22
+    private static let companionSize: CGFloat = 52
+
+    private var outcome: AgentApproval.Outcome? { approval.outcome }
+
+    private var glow: Color {
+        switch outcome {
+        case nil: return Self.amber
+        case .allowed, .elsewhere: return .green
+        case .denied: return Color(white: 0.6)
+        }
+    }
+
+    private var status: String {
+        switch outcome {
+        case nil: return text.needsPermission
+        case .allowed: return text.allowed
+        case .denied: return text.denied
+        case .elsewhere: return text.answered(in: approval.host)
+        }
+    }
+
+    private var mood: NotchMascotMood {
+        switch outcome {
+        case nil: return .alert
+        case .allowed, .elsewhere: return .happy
+        case .denied: return .confused
+        }
+    }
 
     var body: some View {
-        NotchAgentCardChrome {
-            if approval.answered {
-                HStack(spacing: 5) {
-                    Image(systemName: "checkmark.circle.fill").font(.system(size: 10)).foregroundStyle(.green)
-                        .accessibilityHidden(true)
-                    Text(text.answered(in: approval.host)).font(.system(size: 10.5, weight: .semibold)).lineLimit(1)
-                    Spacer(minLength: 4)
-                    Text(approval.folder).font(.system(size: 9.5)).foregroundStyle(.secondary).lineLimit(1)
-                }
-            } else {
-                asking
+        HStack(alignment: .center, spacing: 16) {
+            companion
+            VStack(alignment: .leading, spacing: 8) {
+                header
+                command
+                buttons
             }
         }
+        .padding(.leading, 18)
+        .padding(.trailing, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background { surface }
+        .overlay(alignment: .bottom) {
+            NotchAgentApprovalCountdown(deadline: approval.deadline, tint: Self.amber)
+                .opacity(outcome == nil ? 0.85 : 0)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: Self.radius, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Self.radius, style: .continuous).strokeBorder(.white.opacity(0.08)))
+        .overlay(alignment: .topTrailing) { terminal }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.35), value: outcome)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(approval.answered ? text.answered(in: approval.host)
-            : [title, approval.folder, approval.detail ?? ""].filter { !$0.isEmpty }.joined(separator: ", "))
+        .accessibilityLabel([text.approval(agent.displayName, tool: approval.tool), title,
+                             outcome == nil ? "" : status, approval.detail ?? ""].filter { !$0.isEmpty }.joined(separator: ", "))
     }
 
-    private var asking: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 5) {
-                NotchAgentGlyph(provider: .claude, size: 9, working: false)
-                Text(title).font(.system(size: 10.5, weight: .semibold)).lineLimit(1)
-                Spacer(minLength: 4)
-                Text(approval.folder).font(.system(size: 9.5)).foregroundStyle(.secondary).lineLimit(1)
-            }
-            if let detail = approval.detail {
-                Text(detail)
-                    .font(.system(size: 9.5, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.8))
-                    .lineLimit(2)
-                    .truncationMode(.middle)
-                    .help(detail)
-            }
-            HStack(spacing: 6) {
-                choice(text.deny, tint: .red) { answer(false) }
-                choice(text.askInTerminal, tint: .white) { AgentApprovalService.shared.handBack(approval.id) }
-                Spacer(minLength: 4)
-                choice(text.allow, tint: .green) { answer(true) }
-            }
-            TimelineView(.periodic(from: .now, by: 0.5)) { context in
-                let left = max(0, approval.deadline.timeIntervalSince(context.date)) / AgentApprovalSupport.wait
-                Capsule().fill(.white.opacity(0.12))
-                    .overlay(alignment: .leading) {
-                        GeometryReader { proxy in Capsule().fill(.orange).frame(width: proxy.size.width * left) }
-                    }
-                    .frame(height: 2)
-            }
-            .accessibilityHidden(true)
+    /// Dark, lit from below in the color of where it stands.
+    private var surface: some View {
+        ZStack {
+            Color.white.opacity(0.06)
+            RadialGradient(colors: [glow.opacity(0.36), glow.opacity(0)], center: UnitPoint(x: 0.45, y: 1.15),
+                           startRadius: 0, endRadius: 240)
+                .id(outcome.map { "\($0)" } ?? "asking")
+                .transition(.opacity)
         }
     }
 
-    private func answer(_ allow: Bool?) { AgentApprovalService.shared.answer(approval.id, allow: allow) }
+    /// The companion in the agent's colors, or its mark when the person
+    /// turned the companion off.
+    private var companion: some View {
+        let size = Self.companionSize
+        let shown = NotchMascotSupport.isEnabled()
+        let reacts = NotchMascotSupport.reacts()
+        return Group {
+            if shown {
+                NotchMascotView(look: NotchMascotSupport.look(for: agent), mood: mood, size: size,
+                                cue: reacts && outcome == .allowed ? .celebrate : nil, cueID: outcome == .allowed ? 1 : 0,
+                                reaction: reacts ? .perk : nil)
+            } else {
+                NotchAgentMark(provider: agent, size: size * 0.5)
+            }
+        }
+        .frame(width: size, height: size)
+        .background {
+            Circle()
+                .fill(RadialGradient(colors: [agent.tint.opacity(0.32), agent.tint.opacity(0)], center: .center,
+                                     startRadius: 4, endRadius: size))
+                .frame(width: size * 2, height: size * 2)
+        }
+        .overlay(alignment: .topLeading) { badge.offset(x: -4, y: -4) }
+        .overlay(alignment: .bottomTrailing) {
+            if shown {
+                NotchAgentMark(provider: agent, size: 10)
+                    .frame(width: 20, height: 20)
+                    .background(Color(white: 0.14), in: Circle())
+                    .overlay(Circle().strokeBorder(.white.opacity(0.12)))
+                    .offset(x: 4, y: 4)
+            }
+        }
+        .accessibilityHidden(true)
+    }
 
-    private func choice(_ label: String, tint: Color, action: @escaping () -> Void) -> some View {
+    /// What the card waits for, or how it ended.
+    private var badge: some View {
+        let (symbol, tint): (String, Color) = switch outcome {
+        case nil: ("exclamationmark", .orange)
+        case .allowed, .elsewhere: ("checkmark", .green)
+        case .denied: ("xmark", Color(white: 0.45))
+        }
+        return Image(systemName: symbol)
+            .font(.system(size: 8, weight: .black))
+            .foregroundStyle(.white)
+            .frame(width: 17, height: 17)
+            .background(tint, in: Circle())
+            .overlay(Circle().strokeBorder(.black.opacity(0.3)))
+            .id(symbol)
+            .transition(reduceMotion ? .opacity : .scale(scale: 0.3).combined(with: .opacity))
+            .scaleEffect(popped || reduceMotion ? 1 : 0.3)
+            .opacity(popped ? 1 : 0)
+            .onAppear {
+                withAnimation(reduceMotion ? nil : .spring(response: 0.4, dampingFraction: 0.5).delay(0.2)) { popped = true }
+            }
+    }
+
+    private var header: some View {
+        HStack(spacing: 7) {
+            Circle().fill(.white).frame(width: 7, height: 7).accessibilityHidden(true)
+            Text(title)
+                .font(.system(size: 14, weight: .bold))
+                .lineLimit(1)
+                .help(approval.cwd ?? title)
+            Text(status)
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .layoutPriority(1)
+                .contentTransition(.opacity)
+        }
+        // Clear of the way back to the terminal.
+        .padding(.trailing, 26)
+    }
+
+    /// A command speaks for itself; a path or a query is read with its tool.
+    private var command: some View {
+        HStack(spacing: 6) {
+            if approval.detail != nil && approval.tool != "Bash" {
+                // Whole before the path is cut, unless an MCP tool's long name.
+                Text(approval.tool).foregroundStyle(.secondary).frame(maxWidth: 150, alignment: .leading).fixedSize()
+            }
+            Text(approval.detail ?? approval.tool)
+                .foregroundStyle(.white.opacity(0.92))
+                .truncationMode(.middle)
+        }
+        .font(.system(size: 13, design: .monospaced))
+        .lineLimit(1)
+        .padding(.horizontal, 10)
+        .frame(height: 26)
+        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(.white.opacity(0.07)))
+        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(.white.opacity(0.08)))
+        .help(approval.detail ?? approval.tool)
+    }
+
+    private var buttons: some View {
+        HStack(spacing: 8) {
+            pill(text.deny, fill: .white.opacity(0.12), ink: .white) { answer(false) }
+            pill(text.allow, fill: .white, ink: .black) { answer(true) }
+            // Only when Claude offers a rule to keep.
+            if approval.rules != nil {
+                pill(text.always, fill: Self.amber.opacity(0.24), ink: .white) { answer(true, always: true) }
+            }
+        }
+        .disabled(outcome != nil)
+    }
+
+    /// Hands the question back and goes to the session, where its app's icon says.
+    private var terminal: some View {
+        Button { AgentApprovalService.shared.handBack(approval.id) } label: {
+            Group {
+                if let pid = approval.hostPID {
+                    Image(nsImage: ResponsibleProcess.icon(for: pid, pointSize: 16)).resizable().frame(width: 16, height: 16)
+                } else {
+                    Image(systemName: "apple.terminal").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.8))
+                }
+            }
+            .frame(width: 26, height: 26)
+            .background(.white.opacity(0.08), in: Circle())
+            .contentShape(Circle())
+        }
+        .buttonStyle(NotchButtonStyle(cornerRadius: 13))
+        .help(text.askInTerminal)
+        .accessibilityLabel(text.askInTerminal)
+        .padding(10)
+        .opacity(outcome == nil ? 1 : 0)
+        .disabled(outcome != nil)
+    }
+
+    private func answer(_ allow: Bool, always: Bool = false) {
+        AgentApprovalService.shared.answer(approval.id, allow: allow, always: always)
+    }
+
+    private func pill(_ label: String, fill: Color, ink: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(label)
-                .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(tint)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(ink)
                 .lineLimit(1)
-                .padding(.horizontal, 9)
-                .frame(height: 20)
-                .background(tint.opacity(0.2), in: Capsule(style: .continuous))
+                .minimumScaleFactor(0.8)
+                .padding(.horizontal, 16)
+                .frame(height: 30)
+                .background(fill, in: Capsule(style: .continuous))
                 .contentShape(Capsule(style: .continuous))
         }
-        .buttonStyle(NotchButtonStyle(cornerRadius: 10))
+        .buttonStyle(NotchButtonStyle(cornerRadius: 15))
+    }
+}
+
+/// The time left to answer, running out along the card's foot in one
+/// smooth stroke the render server draws.
+private struct NotchAgentApprovalCountdown: View {
+    let deadline: Date
+    let tint: Color
+    @State private var running = false
+
+    var body: some View {
+        let left = max(0, deadline.timeIntervalSinceNow)
+        Rectangle()
+            .fill(tint)
+            .frame(height: 2)
+            .scaleEffect(x: running ? 0 : left / AgentApprovalSupport.wait, y: 1, anchor: .leading)
+            .onAppear { withAnimation(.linear(duration: left)) { running = true } }
+            .accessibilityHidden(true)
     }
 }
 

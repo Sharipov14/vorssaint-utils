@@ -1266,6 +1266,18 @@ enum NotchMascotSupport {
             palette: NotchMascotPalette(rawValue: defaults.string(forKey: DefaultsKey.notchMascotPalette) ?? "") ?? .pearl)
     }
 
+    /// The companion asking for an agent, in the agent's colors: Claude's
+    /// clay, Codex's blue. Any other agent's keeps the person's.
+    static func look(for agent: AgentProvider?, in defaults: UserDefaults = .standard) -> NotchMascotLook {
+        var look = look(in: defaults)
+        switch agent {
+        case .claude: look.palette = .peach
+        case .codex: look.palette = .sky
+        default: break
+        }
+        return look
+    }
+
     /// How the Command Bar comes out of the island, or nil when it opens in
     /// its own window as it always has.
     static func commandBarStyle(in defaults: UserDefaults = .standard) -> NotchCommandBarStyle? {

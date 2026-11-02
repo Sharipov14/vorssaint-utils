@@ -262,11 +262,16 @@ final class AgentApprovalService: ObservableObject {
         }
     }
 
-    /// Allow or deny from a click; nil hands the question to the terminal.
-    func answer(_ id: UUID, allow: Bool?) {
-        guard connections[id] != nil else { return }
-        reply(id, allow: allow)
-        remove(id)
+    /// Allow or deny from a click, the card saying so a moment; nil hands
+    /// the question to the terminal. Always keeps the rules Claude offered.
+    func answer(_ id: UUID, allow: Bool?, always: Bool = false) {
+        guard connections[id] != nil, let index = pending.firstIndex(where: { $0.id == id }) else { return }
+        reply(id, allow: allow, rules: always ? pending[index].rules : nil)
+        guard let allow else { return remove(id) }
+        pending[index].outcome = allow ? .allowed : .denied
+        DispatchQueue.main.asyncAfter(deadline: .now() + AgentApprovalSupport.answerNote) { [weak self] in
+            self?.remove(id)
+        }
     }
 
     /// Hands the question to the terminal and goes there: the session's tab,
@@ -283,16 +288,16 @@ final class AgentApprovalService: ObservableObject {
     private func settle(_ id: UUID) {
         guard connections[id] != nil, let index = pending.firstIndex(where: { $0.id == id }) else { return }
         reply(id, allow: nil)
-        pending[index].answered = true
+        pending[index].outcome = .elsewhere
         DispatchQueue.main.asyncAfter(deadline: .now() + AgentApprovalSupport.answeredNote) { [weak self] in
             self?.remove(id)
         }
     }
 
     /// Ends the request's connection and stops following its transcript.
-    private func reply(_ id: UUID, allow: Bool?) {
+    private func reply(_ id: UUID, allow: Bool?, rules: NSArray? = nil) {
         guard let connection = connections.removeValue(forKey: id) else { return }
-        Self.send(allow, to: connection.fd)
+        Self.send(allow, rules: rules, to: connection.fd)
         connection.source.cancel()
         queue.async { [weak self] in self?.followers.removeValue(forKey: id)?.source.cancel() }
     }
@@ -308,8 +313,8 @@ final class AgentApprovalService: ObservableObject {
         pinned = false
     }
 
-    private static func send(_ allow: Bool?, to fd: Int32) {
-        let response = AgentApprovalSupport.response(allow: allow)
+    private static func send(_ allow: Bool?, rules: NSArray? = nil, to fd: Int32) {
+        let response = AgentApprovalSupport.response(allow: allow, rules: rules)
         _ = response.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
     }
 }

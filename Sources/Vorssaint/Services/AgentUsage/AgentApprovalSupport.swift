@@ -5,19 +5,25 @@ import Foundation
 
 /// A tool call Claude waits to have allowed, held while the notch asks.
 struct AgentApproval: Identifiable, Equatable {
+    /// How a card ended, said a moment before it goes.
+    enum Outcome { case allowed, denied, elsewhere }
+
     let id: UUID
     let cwd: String?
     let tool: String
     /// The command, file or address the tool is about to use.
     let detail: String?
     let received: Date
+    /// The session asking, for the name Claude gave it.
+    let session: String?
+    /// The rules Claude offers to keep, as its own "don't ask again" does; nil when it offers none.
+    let rules: NSArray?
     /// The app the session runs in, its process and the session's terminal,
     /// to go back to it.
     var host: String?
     var hostPID: Int32?
     var tty: String?
-    /// Answered in the terminal or the editor; the card says so a moment before it goes.
-    var answered = false
+    var outcome: Outcome?
 
     var folder: String { cwd.map { ($0 as NSString).lastPathComponent } ?? "" }
     var deadline: Date { received.addingTimeInterval(AgentApprovalSupport.wait) }
@@ -91,6 +97,8 @@ enum AgentApprovalSupport {
     static let detailLimit = 300
     /// How long a card answered elsewhere says so.
     static let answeredNote: TimeInterval = 3
+    /// How long a card answered here shows the answer, the companion reacting.
+    static let answerNote: TimeInterval = 1.2
     /// Read from a transcript when a request comes: its call was written just before.
     static let trailRead = 1024 * 1024
     /// The tools whose question is more than allow or deny stay in the terminal.
@@ -229,8 +237,10 @@ enum AgentApprovalSupport {
             .compactMap { input[$0] as? String }
             .map { $0.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
             .first { !$0.isEmpty }
+        let rules = object["permission_suggestions"] as? [[String: Any]] ?? []
         return AgentApproval(id: id, cwd: object["cwd"] as? String, tool: tool,
-                             detail: detail.map { String($0.prefix(detailLimit)) }, received: now)
+                             detail: detail.map { String($0.prefix(detailLimit)) }, received: now,
+                             session: object["session_id"] as? String, rules: rules.isEmpty ? nil : rules as NSArray)
     }
 
     /// Where the request's call shows: the session's transcript, or a
@@ -247,11 +257,13 @@ enum AgentApprovalSupport {
     }
 
     /// curl prints the body; an empty one leaves Claude to ask in the terminal.
-    static func response(allow: Bool?) -> Data {
+    /// Rules given with an allow are kept, as Claude keeps them when told not to ask again.
+    static func response(allow: Bool?, rules: NSArray? = nil) -> Data {
         var body = Data()
         if let allow {
             var decision: [String: Any] = ["behavior": allow ? "allow" : "deny"]
             if !allow { decision["message"] = "The person denied this from the notch." }
+            if allow, let rules { decision["updatedPermissions"] = rules }
             let output = ["hookSpecificOutput": ["hookEventName": "PermissionRequest", "decision": decision] as [String: Any]]
             body = (try? JSONSerialization.data(withJSONObject: output, options: [.sortedKeys])) ?? Data()
         }

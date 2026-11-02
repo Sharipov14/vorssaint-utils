@@ -94,6 +94,17 @@ enum AgentApprovalTests {
                         && AgentApprovalSupport.approval(from: other, id: UUID(), now: now) == nil,
                      "a question, or another event, is left to the terminal")
 
+        let offered = Data(#"{"hook_event_name":"PermissionRequest","session_id":"s1","tool_name":"Bash","tool_input":{"command":"npm test"},"permission_suggestions":[{"type":"addRules","rules":[{"toolName":"Bash","ruleContent":"npm test:*"}],"behavior":"allow","destination":"localSettings"}]}"#.utf8)
+        let rules = AgentApprovalSupport.approval(from: offered, id: UUID(), now: now)?.rules
+        suite.expect(rules?.count == 1 && AgentApprovalSupport.approval(from: offered, id: UUID(), now: now)?.session == "s1"
+                        && approval?.rules == nil && approval?.session == nil,
+                     "a request keeps its session and the rules Claude offers, and none when it offers none")
+        let always = String(decoding: AgentApprovalSupport.response(allow: true, rules: rules), as: UTF8.self)
+        suite.expect(always.contains(#""behavior":"allow""#)
+                        && always.contains(#""updatedPermissions":[{"behavior":"allow","destination":"localSettings","rules":[{"ruleContent":"npm test:*","toolName":"Bash"}],"type":"addRules"}]"#)
+                        && !String(decoding: AgentApprovalSupport.response(allow: false, rules: rules), as: UTF8.self).contains("updatedPermissions"),
+                     "always allows and hands Claude its own rules to keep; a denial keeps none")
+
         func output(_ allow: Bool?) -> String { String(decoding: AgentApprovalSupport.response(allow: allow), as: UTF8.self) }
         suite.expect(output(true).hasSuffix(#"{"hookSpecificOutput":{"decision":{"behavior":"allow"},"hookEventName":"PermissionRequest"}}"#)
                         && output(false).contains(#""behavior":"deny""#)
