@@ -2738,7 +2738,7 @@ struct NotchGeometry: Equatable {
                       fileMediaHeight: CGFloat? = nil, systemCards: Int = 6, toolCount: Int? = 8,
                       capturePreviewHeight: CGFloat? = nil,
                       timerHasSession: Bool = false, timerMode: NotchTimerMode = .timer,
-                      agentsHeight: CGFloat? = nil) -> CGSize {
+                      agentsHeight: CGFloat? = nil, agentsAsking: Bool = false) -> CGSize {
         let budget = contentBudget
         let showsCapturePreview = module == .captures && !detail && capturePreviewHeight != nil
         let showsFileMedia = module == .files && !detail && fileMediaHeight != nil
@@ -2789,7 +2789,9 @@ struct NotchGeometry: Equatable {
                 contentHeight = min(budget, NotchLayout.timer(mode: timerMode, hasSession: timerHasSession, height: budget))
             case .agents:
                 // Only the cards a person chose; a short set leaves a short island.
-                contentHeight = min(budget, agentsHeight.map { $0 > 0 ? $0 : NotchLayout.emptyHeight } ?? budget)
+                // A question Claude asks gets a readable page, as a detail does.
+                contentHeight = min(agentsAsking ? pageBudget : budget,
+                                    agentsHeight.map { $0 > 0 ? $0 : NotchLayout.emptyHeight } ?? budget)
             // Lists and previews fill the chosen content budget.
             case .mixer, .calendar, .clipboard, .captures, .files, .notifications, .downloads, .camera, .scratchpad, .watch:
                 contentHeight = budget

@@ -166,6 +166,8 @@ final class NotchService: ObservableObject {
     @Published private var captureContentHeight: CGFloat?
     /// Kept after closing, so the next Fan Control detail opens at its size.
     @Published private var fanDetailHeight: CGFloat?
+    /// The Live tab's cards, measured; the island makes room for them while Claude asks a question.
+    private var agentListHeight: CGFloat?
     @Published private(set) var power = PowerReading()
     @Published private var musicDetailVisible = false
 
@@ -872,13 +874,29 @@ final class NotchService: ObservableObject {
                                      timerMode: NotchTimerService.shared.session.hasSession
                                         ? NotchTimerService.shared.session.mode : NotchTimerSupport.savedMode(),
                                      agentsHeight: module == .agents && !detail && !panel
-                                        ? agentsContentHeight(width: geometry.contentWidth) : nil)
+                                        ? agentsContentHeight(width: geometry.contentWidth) : nil,
+                                     agentsAsking: AgentApprovalService.shared.asking)
+    }
+
+    /// A question Claude asks makes room for itself, its choices and all.
+    private func agentsContentHeight(width: CGFloat) -> CGFloat? {
+        let cards = agentCardsHeight(width: width)
+        guard AgentApprovalService.shared.asking, let agentListHeight else { return cards }
+        return max(cards ?? 0, agentListHeight)
+    }
+
+    func updateAgentListHeight(_ height: CGFloat) {
+        guard height.isFinite, height > 0 else { return }
+        let measured = ceil(height)
+        guard agentListHeight != measured else { return }
+        agentListHeight = measured
+        if AgentApprovalService.shared.asking { refreshPresentation() }
     }
 
     /// The AI page is as tall as the cards it shows, and never shorter than its
     /// Live tab needs; nil while the logs are first read, when the page fills
     /// the island with its progress.
-    private func agentsContentHeight(width: CGFloat) -> CGFloat? {
+    private func agentCardsHeight(width: CGFloat) -> CGFloat? {
         let usage = AgentUsageService.shared.snapshot
         let enabled = NotchAgentSupport.providers()
         // Added Codex accounts have cards before, or without, any log.

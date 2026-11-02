@@ -82,6 +82,9 @@ struct NotchAgentSessionsList: View {
                         if !orphans.isEmpty { self.orphans }
                     }
                     .animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.86), value: pending)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                        if !preview { NotchService.shared.updateAgentListHeight(height) }
+                    }
                 }
                 .scrollIndicators(.automatic)
             }
@@ -159,9 +162,10 @@ struct NotchAgentSessionsList: View {
     }
 }
 
-/// A tool call Claude waits to have allowed, until the line along its foot
-/// runs out and the terminal asks instead. Answered, here or elsewhere, it
-/// says so a moment, the companion reacting, then goes.
+/// A tool call Claude waits to have allowed, or its questions answered,
+/// until the line along its foot runs out and only the terminal asks.
+/// Answered, here or elsewhere, it says so a moment, the companion reacting,
+/// then goes.
 private struct NotchAgentApprovalCard: View {
     let approval: AgentApproval
     /// The name Claude gave the session, or its folder.
@@ -174,14 +178,17 @@ private struct NotchAgentApprovalCard: View {
     /// Only Claude asks for now.
     private let agent = AgentProvider.claude
     private static let amber = Color(red: 1, green: 0.62, blue: 0.22)
+    private static let teal = Color(red: 0.13, green: 0.83, blue: 0.93)
     private static let radius: CGFloat = 22
     private static let companionSize: CGFloat = 52
 
     private var outcome: AgentApproval.Outcome? { approval.outcome }
+    /// Warm for a permission, cool for a question.
+    private var tint: Color { approval.isQuestion ? Self.teal : Self.amber }
 
     private var glow: Color {
         switch outcome {
-        case nil: return Self.amber
+        case nil: return tint
         case .allowed, .elsewhere: return .green
         case .denied: return Color(white: 0.6)
         }
@@ -189,8 +196,8 @@ private struct NotchAgentApprovalCard: View {
 
     private var status: String {
         switch outcome {
-        case nil: return text.needsPermission
-        case .allowed: return text.allowed
+        case nil: return approval.isQuestion ? text.asks : text.needsPermission
+        case .allowed: return approval.isQuestion ? text.answerSent : text.allowed
         case .denied: return text.denied
         case .elsewhere: return text.answered(in: approval.host)
         }
@@ -209,8 +216,12 @@ private struct NotchAgentApprovalCard: View {
             companion
             VStack(alignment: .leading, spacing: 8) {
                 header
-                command
-                buttons
+                if approval.isQuestion {
+                    NotchAgentQuestionForm(approval: approval, text: text, tint: Self.teal)
+                } else {
+                    command
+                    buttons
+                }
             }
         }
         .padding(.leading, 18)
@@ -219,7 +230,7 @@ private struct NotchAgentApprovalCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background { surface }
         .overlay(alignment: .bottom) {
-            NotchAgentApprovalCountdown(deadline: approval.deadline, tint: Self.amber)
+            NotchAgentApprovalCountdown(deadline: approval.deadline, wait: approval.wait, tint: tint)
                 .opacity(outcome == nil ? 0.85 : 0)
         }
         .clipShape(RoundedRectangle(cornerRadius: Self.radius, style: .continuous))
@@ -227,8 +238,14 @@ private struct NotchAgentApprovalCard: View {
         .overlay(alignment: .topTrailing) { terminal }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.35), value: outcome)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel([text.approval(agent.displayName, tool: approval.tool), title,
-                             outcome == nil ? "" : status, approval.detail ?? ""].filter { !$0.isEmpty }.joined(separator: ", "))
+        .accessibilityLabel(accessibilityTitle)
+    }
+
+    /// A question's text and choices are read from the form itself.
+    private var accessibilityTitle: String {
+        let parts = approval.isQuestion ? [agent.displayName, title, status]
+            : [text.approval(agent.displayName, tool: approval.tool), title, outcome == nil ? "" : status, approval.detail ?? ""]
+        return parts.filter { !$0.isEmpty }.joined(separator: ", ")
     }
 
     /// Dark, lit from below in the color of where it stands.
@@ -280,7 +297,7 @@ private struct NotchAgentApprovalCard: View {
     /// What the card waits for, or how it ended.
     private var badge: some View {
         let (symbol, tint): (String, Color) = switch outcome {
-        case nil: ("exclamationmark", .orange)
+        case nil: approval.isQuestion ? ("questionmark", Self.teal) : ("exclamationmark", .orange)
         case .allowed, .elsewhere: ("checkmark", .green)
         case .denied: ("xmark", Color(white: 0.45))
         }
@@ -374,20 +391,186 @@ private struct NotchAgentApprovalCard: View {
     private func answer(_ allow: Bool, always: Bool = false) {
         AgentApprovalService.shared.answer(approval.id, allow: allow, always: always)
     }
+}
 
-    private func pill(_ label: String, fill: Color, ink: Color, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(label)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(ink)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                .padding(.horizontal, 16)
-                .frame(height: 30)
-                .background(fill, in: Capsule(style: .continuous))
-                .contentShape(Capsule(style: .continuous))
+/// A card's answer button.
+private func pill(_ label: String, fill: Color, ink: Color, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+        Text(label)
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(ink)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .padding(.horizontal, 16)
+            .frame(height: 30)
+            .background(fill, in: Capsule(style: .continuous))
+            .contentShape(Capsule(style: .continuous))
+    }
+    .buttonStyle(NotchButtonStyle(cornerRadius: 15))
+}
+
+/// Claude's questions one at a time, as the terminal asks them: a pick
+/// answers one and moves on, the last sending them all. Several picks, or a
+/// typed answer, wait for the button.
+private struct NotchAgentQuestionForm: View {
+    let approval: AgentApproval
+    let text: NotchAgentStrings
+    let tint: Color
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var index = 0
+    @State private var picks: [[String]]
+    @State private var typing = false
+    @State private var typed = ""
+    @FocusState private var focused: Bool
+
+    init(approval: AgentApproval, text: NotchAgentStrings, tint: Color) {
+        self.approval = approval
+        self.text = text
+        self.tint = tint
+        _picks = State(initialValue: Array(repeating: [], count: approval.questions.count))
+    }
+
+    private var question: AgentQuestion { approval.questions[min(index, approval.questions.count - 1)] }
+    private var isLast: Bool { index >= approval.questions.count - 1 }
+    private var picked: [String] { index < picks.count ? picks[index] : [] }
+    private var answer: String { typed.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    /// Claude's short name for the question, and which one of how many.
+    private var heading: String? {
+        let count = approval.questions.count
+        let parts = [question.header, count > 1 ? "\(index + 1)/\(count)" : nil].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 8) {
+                if let heading {
+                    Text(heading).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Text(question.text)
+                    .font(.system(size: 14, weight: .semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+                options
+            }
+            .id(index)
+            .transition(reduceMotion ? .opacity : .push(from: .trailing))
+            footer
         }
-        .buttonStyle(NotchButtonStyle(cornerRadius: 15))
+        .disabled(approval.outcome != nil)
+    }
+
+    /// Bare labels go side by side while they fit; described ones, or ones to
+    /// tick, one under another.
+    @ViewBuilder private var options: some View {
+        if !question.multiple && question.options.allSatisfy({ $0.detail == nil }) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    ForEach(question.options, id: \.label) { option in
+                        pill(option.label, fill: .white.opacity(0.1), ink: .white) { pick(option.label) }
+                    }
+                }
+                plates
+            }
+        } else {
+            plates
+        }
+    }
+
+    private var plates: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(question.options, id: \.label) { plate($0) }
+        }
+    }
+
+    private func plate(_ option: AgentQuestion.Option) -> some View {
+        let on = picked.contains(option.label)
+        let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+        return Button { pick(option.label) } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                if question.multiple {
+                    Image(systemName: on ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 12))
+                        .foregroundStyle(on ? tint : .secondary)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(option.label).font(.system(size: 13, weight: .semibold))
+                    if let detail = option.detail {
+                        Text(detail).font(.system(size: 12)).foregroundStyle(.secondary)
+                    }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            .multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(on ? tint.opacity(0.22) : .white.opacity(0.07), in: shape)
+            .overlay(shape.strokeBorder(on ? tint.opacity(0.55) : .white.opacity(0.08)))
+            .contentShape(shape)
+        }
+        .buttonStyle(NotchButtonStyle(cornerRadius: 10, lifts: false))
+        .accessibilityAddTraits(on ? .isSelected : [])
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: on)
+    }
+
+    /// An answer of one's own, and the button that sends several picks.
+    private var footer: some View {
+        HStack(spacing: 8) {
+            if typing {
+                TextField(text.otherPlaceholder, text: $typed)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                    .focused($focused)
+                    .onSubmit(submitTyped)
+                    .onExitCommand { typing = false }
+                    .padding(.horizontal, 12)
+                    .frame(height: 30)
+                    .background(.white.opacity(0.07), in: Capsule(style: .continuous))
+                    .overlay(Capsule(style: .continuous).strokeBorder(tint.opacity(focused ? 0.55 : 0.2)))
+                    .accessibilityLabel(text.other)
+                pill(isLast ? text.send : text.next, fill: .white, ink: .black, action: submitTyped)
+                    .disabled(answer.isEmpty)
+            } else {
+                pill(text.other, fill: .white.opacity(0.12), ink: .white, action: startTyping)
+                if question.multiple {
+                    pill(isLast ? text.send : text.next, fill: .white, ink: .black, action: advance)
+                        .disabled(picked.isEmpty)
+                }
+            }
+        }
+        .transition(.opacity)
+    }
+
+    private func pick(_ label: String) {
+        guard index < picks.count else { return }
+        guard question.multiple else {
+            picks[index] = [label]
+            return advance()
+        }
+        if let at = picks[index].firstIndex(of: label) { picks[index].remove(at: at) } else { picks[index].append(label) }
+    }
+
+    /// The island takes the keyboard only now, the person having asked to type.
+    private func startTyping() {
+        typing = true
+        NotchService.shared.presentationWindow?.makeKey()
+        DispatchQueue.main.async { focused = true }
+    }
+
+    private func submitTyped() {
+        guard !answer.isEmpty, index < picks.count else { return }
+        picks[index] = question.multiple ? picks[index] + [answer] : [answer]
+        advance()
+    }
+
+    private func advance() {
+        guard !isLast else { return AgentApprovalService.shared.answer(approval.id, picks: picks) }
+        withAnimation(reduceMotion ? nil : .spring(response: 0.4, dampingFraction: 0.86)) {
+            index += 1
+            typing = false
+            typed = ""
+        }
     }
 }
 
@@ -395,6 +578,7 @@ private struct NotchAgentApprovalCard: View {
 /// smooth stroke the render server draws.
 private struct NotchAgentApprovalCountdown: View {
     let deadline: Date
+    let wait: TimeInterval
     let tint: Color
     @State private var running = false
 
@@ -403,7 +587,7 @@ private struct NotchAgentApprovalCountdown: View {
         Rectangle()
             .fill(tint)
             .frame(height: 2)
-            .scaleEffect(x: running ? 0 : left / AgentApprovalSupport.wait, y: 1, anchor: .leading)
+            .scaleEffect(x: running ? 0 : left / wait, y: 1, anchor: .leading)
             .onAppear { withAnimation(.linear(duration: left)) { running = true } }
             .accessibilityHidden(true)
     }

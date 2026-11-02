@@ -18,6 +18,10 @@ struct AgentApproval: Identifiable, Equatable {
     let session: String?
     /// The rules Claude offers to keep, as its own "don't ask again" does; nil when it offers none.
     let rules: NSArray?
+    /// What AskUserQuestion asks, one question after another; empty for a permission.
+    var questions: [AgentQuestion] = []
+    /// The questions as Claude sent them, sent back unchanged with the answers.
+    var asked: NSArray?
     /// The app the session runs in, its process and the session's terminal,
     /// to go back to it.
     var host: String?
@@ -26,7 +30,25 @@ struct AgentApproval: Identifiable, Equatable {
     var outcome: Outcome?
 
     var folder: String { cwd.map { ($0 as NSString).lastPathComponent } ?? "" }
-    var deadline: Date { received.addingTimeInterval(AgentApprovalSupport.wait) }
+    var isQuestion: Bool { !questions.isEmpty }
+    var wait: TimeInterval { isQuestion ? AgentApprovalSupport.questionWait : AgentApprovalSupport.wait }
+    var deadline: Date { received.addingTimeInterval(wait) }
+}
+
+/// One of the questions Claude asks with AskUserQuestion.
+struct AgentQuestion: Equatable {
+    struct Option: Equatable {
+        let label: String
+        /// Nil when Claude gave none, or only the label again.
+        let detail: String?
+    }
+
+    let text: String
+    /// Claude's short name for it, a dozen letters or so.
+    let header: String?
+    let options: [Option]
+    /// Any number of options can be picked.
+    let multiple: Bool
 }
 
 /// A request's tool call followed through its session's transcript. Claude
@@ -87,8 +109,10 @@ enum AgentHookRequest: Equatable {
 /// only this account can open. With the app closed or the island away, curl
 /// prints nothing and Claude asks in the terminal as it always does.
 enum AgentApprovalSupport {
-    /// How long the notch asks before the terminal does; Claude waits meanwhile.
+    /// How long a card waits for a click; the terminal asks meanwhile too.
     static let wait: TimeInterval = 30
+    /// A question takes longer to read than a command.
+    static let questionWait: TimeInterval = 120
     static let socketName = "agents.sock"
     /// `sun_path` holds 104 bytes, the terminating zero included.
     static let socketPathLimit = 103
@@ -101,18 +125,18 @@ enum AgentApprovalSupport {
     static let answerNote: TimeInterval = 1.2
     /// Read from a transcript when a request comes: its call was written just before.
     static let trailRead = 1024 * 1024
-    /// The tools whose question is more than allow or deny stay in the terminal.
-    static let terminalTools: Set<String> = ["AskUserQuestion", "ExitPlanMode"]
+    /// A plan to approve stays in the terminal, where its modes are offered.
+    static let terminalTools: Set<String> = ["ExitPlanMode"]
 
     // MARK: The hook
 
-    /// curl gives up a little after the notch does, and Claude a little after curl.
+    /// curl gives up a little after the notch's longest wait, and Claude a little after curl.
     static func command(socket: String) -> String {
-        "/usr/bin/curl -s --max-time \(Int(wait) + 10) -H 'Expect:' --unix-socket \(shellQuoted(socket)) "
+        "/usr/bin/curl -s --max-time \(Int(questionWait) + 10) -H 'Expect:' --unix-socket \(shellQuoted(socket)) "
             + "--data-binary @- http://localhost/permission || true"
     }
 
-    static var timeout: Int { Int(wait) + 15 }
+    static var timeout: Int { Int(questionWait) + 15 }
 
     static func shellQuoted(_ value: String) -> String {
         "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
@@ -123,9 +147,12 @@ enum AgentApprovalSupport {
         ["hooks": [["type": "command", "command": command, "timeout": timeout] as [String: Any]]]
     }
 
+    /// An earlier hook of this app, which curl ends sooner, reads as off
+    /// until it is added again, as settings change only with the person's consent.
     static func isInstalled(in settings: [String: Any], socket: String) -> Bool {
-        groups(in: settings)?.contains { group in
-            (group["hooks"] as? [[String: Any]])?.contains { isOurs($0, socket: socket) } == true
+        let command = command(socket: socket)
+        return groups(in: settings)?.contains { group in
+            (group["hooks"] as? [[String: Any]])?.contains { $0["command"] as? String == command } == true
         } == true
     }
 
@@ -238,9 +265,43 @@ enum AgentApprovalSupport {
             .map { $0.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
             .first { !$0.isEmpty }
         let rules = object["permission_suggestions"] as? [[String: Any]] ?? []
-        return AgentApproval(id: id, cwd: object["cwd"] as? String, tool: tool,
-                             detail: detail.map { String($0.prefix(detailLimit)) }, received: now,
-                             session: object["session_id"] as? String, rules: rules.isEmpty ? nil : rules as NSArray)
+        var approval = AgentApproval(id: id, cwd: object["cwd"] as? String, tool: tool,
+                                     detail: detail.map { String($0.prefix(detailLimit)) }, received: now,
+                                     session: object["session_id"] as? String, rules: rules.isEmpty ? nil : rules as NSArray)
+        if tool == "AskUserQuestion" {
+            // One the notch cannot show is left to the terminal.
+            guard let asked = input["questions"] as? [[String: Any]], let questions = questions(from: asked) else { return nil }
+            approval.questions = questions
+            approval.asked = asked as NSArray
+        }
+        return approval
+    }
+
+    /// Nil unless every question has its text and options to pick.
+    static func questions(from asked: [[String: Any]]) -> [AgentQuestion]? {
+        let questions = asked.compactMap { question -> AgentQuestion? in
+            guard let text = question["question"] as? String, !text.isEmpty,
+                  let options = question["options"] as? [[String: Any]], !options.isEmpty else { return nil }
+            let picked = options.compactMap { option -> AgentQuestion.Option? in
+                guard let label = option["label"] as? String, !label.isEmpty else { return nil }
+                let detail = (option["description"] as? String).flatMap { $0.isEmpty || $0 == label ? nil : $0 }
+                return AgentQuestion.Option(label: label, detail: detail)
+            }
+            guard picked.count == options.count else { return nil }
+            let header = (question["header"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            return AgentQuestion(text: text, header: header, options: picked, multiple: question["multiSelect"] as? Bool ?? false)
+        }
+        return questions.isEmpty || questions.count != asked.count ? nil : questions
+    }
+
+    /// Claude's answers keyed by question: the label picked or the text typed,
+    /// a list of them where several can be picked. Unanswered questions are left out.
+    static func answers(to questions: [AgentQuestion], picks: [[String]]) -> [String: Any] {
+        var answers: [String: Any] = [:]
+        for (question, picked) in zip(questions, picks) where !picked.isEmpty {
+            answers[question.text] = question.multiple ? picked : picked[0]
+        }
+        return answers
     }
 
     /// Where the request's call shows: the session's transcript, or a
@@ -258,12 +319,14 @@ enum AgentApprovalSupport {
 
     /// curl prints the body; an empty one leaves Claude to ask in the terminal.
     /// Rules given with an allow are kept, as Claude keeps them when told not to ask again.
-    static func response(allow: Bool?, rules: NSArray? = nil) -> Data {
+    /// Answers go with Claude's questions, unchanged, as the input it runs AskUserQuestion with.
+    static func response(allow: Bool?, rules: NSArray? = nil, asked: NSArray? = nil, answers: [String: Any]? = nil) -> Data {
         var body = Data()
         if let allow {
             var decision: [String: Any] = ["behavior": allow ? "allow" : "deny"]
             if !allow { decision["message"] = "The person denied this from the notch." }
             if allow, let rules { decision["updatedPermissions"] = rules }
+            if allow, let asked, let answers { decision["updatedInput"] = ["questions": asked, "answers": answers] }
             let output = ["hookSpecificOutput": ["hookEventName": "PermissionRequest", "decision": decision] as [String: Any]]
             body = (try? JSONSerialization.data(withJSONObject: output, options: [.sortedKeys])) ?? Data()
         }

@@ -29,6 +29,18 @@ enum AgentApprovalTests {
         suite.expect(installed.map { AgentApprovalSupport.isInstalled(in: $0, socket: socket) } == true
                         && !AgentApprovalSupport.isInstalled(in: original, socket: socket),
                      "the installed hook is recognized by its socket")
+        let older = command.replacingOccurrences(of: "--max-time \(Int(AgentApprovalSupport.questionWait) + 10)", with: "--max-time 40")
+        let outdated: [String: Any] = ["hooks": ["PermissionRequest": [["hooks": [["type": "command", "command": older, "timeout": 45]]]]]]
+        let updated = AgentApprovalSupport.settings(outdated, installing: command, socket: socket)
+        let handlers = (((updated?["hooks"] as? [String: Any])?["PermissionRequest"] as? [[String: Any]]) ?? [])
+            .flatMap { $0["hooks"] as? [[String: Any]] ?? [] }
+        suite.expect(older != command && !AgentApprovalSupport.isInstalled(in: outdated, socket: socket)
+                        && handlers.count == 1 && handlers.first?["command"] as? String == command
+                        && handlers.first?["timeout"] as? Int == AgentApprovalSupport.timeout,
+                     "an earlier hook that gives up too soon reads as off, and adding it again replaces it")
+        suite.expect(AgentApprovalSupport.timeout > Int(AgentApprovalSupport.questionWait) + 10
+                        && AgentApprovalSupport.questionWait > AgentApprovalSupport.wait,
+                     "curl and Claude outlast the longest card")
 
         let removed = again.flatMap { AgentApprovalSupport.settings($0, installing: nil, socket: socket) }
         suite.expect(removed.map { NSDictionary(dictionary: $0).isEqual(to: original) } == true,
@@ -88,11 +100,35 @@ enum AgentApprovalTests {
         suite.expect(approval?.tool == "Bash" && approval?.detail == "npm run test" && approval?.folder == "app"
                         && approval?.deadline == now.addingTimeInterval(AgentApprovalSupport.wait),
                      "the card names the tool, its command on one line, and the folder")
-        let question = Data(#"{"hook_event_name":"PermissionRequest","tool_name":"AskUserQuestion","tool_input":{}}"#.utf8)
+        let empty = Data(#"{"hook_event_name":"PermissionRequest","tool_name":"AskUserQuestion","tool_input":{}}"#.utf8)
+        let unlabeled = Data(#"{"hook_event_name":"PermissionRequest","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"Which?","options":[{"label":"A"},{"description":"no label"}]}]}}"#.utf8)
+        let plan = Data(#"{"hook_event_name":"PermissionRequest","tool_name":"ExitPlanMode","tool_input":{"plan":"x"}}"#.utf8)
         let other = Data(#"{"hook_event_name":"PreToolUse","tool_name":"Bash"}"#.utf8)
-        suite.expect(AgentApprovalSupport.approval(from: question, id: UUID(), now: now) == nil
-                        && AgentApprovalSupport.approval(from: other, id: UUID(), now: now) == nil,
-                     "a question, or another event, is left to the terminal")
+        suite.expect([empty, unlabeled, plan, other].allSatisfy { AgentApprovalSupport.approval(from: $0, id: UUID(), now: now) == nil },
+                     "a question the notch cannot show, a plan, or another event, is left to the terminal")
+
+        let asking = Data(#"{"hook_event_name":"PermissionRequest","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"Which color?","header":"Color","options":[{"label":"Red","description":"Red"},{"label":"Blue","description":"Calm and cool","preview":"b"}],"multiSelect":false},{"question":"Which sizes?","header":"","options":[{"label":"S","description":""},{"label":"M"},{"label":"L"}],"multiSelect":true}]}}"#.utf8)
+        let asked = AgentApprovalSupport.approval(from: asking, id: UUID(), now: now)
+        let questions = asked?.questions ?? []
+        suite.expect(questions == [
+            AgentQuestion(text: "Which color?", header: "Color", options: [.init(label: "Red", detail: nil), .init(label: "Blue", detail: "Calm and cool")], multiple: false),
+            AgentQuestion(text: "Which sizes?", header: nil, options: [.init(label: "S", detail: nil), .init(label: "M", detail: nil), .init(label: "L", detail: nil)], multiple: true),
+        ] && asked?.isQuestion == true && asked?.deadline == now.addingTimeInterval(AgentApprovalSupport.questionWait),
+                     "a question keeps its choices, a description that only repeats the label dropped, and waits longer")
+        let answers = AgentApprovalSupport.answers(to: questions, picks: [["Blue"], ["S", "my own"]])
+        let sent = String(decoding: AgentApprovalSupport.response(allow: true, asked: asked?.asked, answers: answers), as: UTF8.self)
+        let decision = (try? JSONSerialization.jsonObject(with: Data((sent.components(separatedBy: "\r\n\r\n").last ?? "").utf8)))
+            .flatMap { (($0 as? [String: Any])?["hookSpecificOutput"] as? [String: Any])?["decision"] as? [String: Any] }
+        let input = decision?["updatedInput"] as? [String: Any]
+        let original = (try? JSONSerialization.jsonObject(with: asking) as? [String: Any])
+            .flatMap { ($0["tool_input"] as? [String: Any])?["questions"] as? NSArray }
+        suite.expect(decision?["behavior"] as? String == "allow"
+                        && (input?["questions"] as? NSArray).map { $0.isEqual(original) } == true
+                        && NSDictionary(dictionary: input?["answers"] as? [String: Any] ?? [:])
+                            .isEqual(to: ["Which color?": "Blue", "Which sizes?": ["S", "my own"]]),
+                     "answers go back with Claude's questions as they came: a label, or a list where several are picked")
+        suite.expect(AgentApprovalSupport.answers(to: questions, picks: [["Red"], []]).count == 1,
+                     "a question left unanswered is left out")
 
         let offered = Data(#"{"hook_event_name":"PermissionRequest","session_id":"s1","tool_name":"Bash","tool_input":{"command":"npm test"},"permission_suggestions":[{"type":"addRules","rules":[{"toolName":"Bash","ruleContent":"npm test:*"}],"behavior":"allow","destination":"localSettings"}]}"#.utf8)
         let rules = AgentApprovalSupport.approval(from: offered, id: UUID(), now: now)?.rules

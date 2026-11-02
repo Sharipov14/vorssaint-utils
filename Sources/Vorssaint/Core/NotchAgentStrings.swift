@@ -141,6 +141,15 @@ struct NotchAgentStrings {
     let needsPermission: String
     let allowed: String
     let denied: String
+    /// Beside the session's name while Claude waits for an answer to its question.
+    let asks: String
+    let answerSent: String
+    /// An answer of one's own, typed, as the terminal's "Type something".
+    let other: String
+    let otherPlaceholder: String
+    let send: String
+    /// To the next of Claude's questions, the last one sending them all.
+    let next: String
 
     func tokens(_ count: String) -> String { String(format: tokensFormat, count) }
     func cached(_ share: String) -> String { String(format: cachedFormat, share) }
@@ -381,8 +390,8 @@ extension NotchAgentStrings {
         stepWeb: "Searches the web",
         stepPlan: "Plans",
         stepDelegate: "Delegates",
-        approvalsTitle: "Answer Claude’s permission requests",
-        approvalsCaption: "Claude waits up to 30 seconds for Allow or Deny in Dynamic Island, then asks in the terminal. Turning this on adds a hook to ~/.claude/settings.json.",
+        approvalsTitle: "Answer Claude’s requests and questions",
+        approvalsCaption: "Claude’s permission requests wait up to 30 seconds in Dynamic Island, its questions up to 2 minutes; the terminal asks at the same time. Turning this on adds a hook to ~/.claude/settings.json.",
         approvalsConfirmTitle: "Add a hook to ~/.claude/settings.json?",
         approvalsConfirmFormat: "When Claude asks for permission, it will run:\n\n%@\n\nA dated copy of the file is saved beside it first. Its keys get sorted; your own hooks stay as they are.",
         approvalsConfirm: "Add Hook",
@@ -398,7 +407,13 @@ extension NotchAgentStrings {
         always: "Always",
         needsPermission: "needs permission",
         allowed: "Allowed",
-        denied: "Denied")
+        denied: "Denied",
+        asks: "asks",
+        answerSent: "Answer sent",
+        other: "Other…",
+        otherPlaceholder: "Your answer…",
+        send: "Send",
+        next: "Next")
 
     static let uk = NotchAgentStrings(
         title: "ШІ-агенти",
@@ -519,8 +534,8 @@ extension NotchAgentStrings {
         stepWeb: "Шукає в мережі",
         stepPlan: "Планує",
         stepDelegate: "Доручає",
-        approvalsTitle: "Відповідати на запити дозволів Claude",
-        approvalsCaption: "Claude до 30 секунд чекає на «Дозволити» чи «Відхилити» в Dynamic Island, а потім питає в терміналі. Увімкнення додає хук у ~/.claude/settings.json.",
+        approvalsTitle: "Відповідати на запити й питання Claude",
+        approvalsCaption: "Запити дозволів Claude чекають у Dynamic Island до 30 секунд, питання — до 2 хвилин; термінал питає одночасно. Увімкнення додає хук у ~/.claude/settings.json.",
         approvalsConfirmTitle: "Додати хук у ~/.claude/settings.json?",
         approvalsConfirmFormat: "Коли Claude проситиме дозвіл, він виконає:\n\n%@\n\nСпершу поруч зберігається копія файлу з датою. Ключі буде впорядковано; ваші хуки залишаться як є.",
         approvalsConfirm: "Додати хук",
@@ -536,7 +551,13 @@ extension NotchAgentStrings {
         always: "Завжди",
         needsPermission: "потребує дозволу",
         allowed: "Дозволено",
-        denied: "Відхилено")
+        denied: "Відхилено",
+        asks: "питає",
+        answerSent: "Відповідь надіслано",
+        other: "Інше…",
+        otherPlaceholder: "Ваша відповідь…",
+        send: "Надіслати",
+        next: "Далі")
 
     static let ptBR = NotchAgentStrings(
         title: "Agentes de IA",
@@ -657,8 +678,8 @@ extension NotchAgentStrings {
         stepWeb: "Pesquisa na web",
         stepPlan: "Planeja",
         stepDelegate: "Delega",
-        approvalsTitle: "Responder aos pedidos de permissão do Claude",
-        approvalsCaption: "O Claude espera até 30 segundos por Permitir ou Negar na Dynamic Island e depois pergunta no terminal. Ativar isto adiciona um hook a ~/.claude/settings.json.",
+        approvalsTitle: "Responder aos pedidos e perguntas do Claude",
+        approvalsCaption: "Os pedidos de permissão do Claude esperam até 30 segundos na Dynamic Island, e as perguntas até 2 minutos; o terminal pergunta ao mesmo tempo. Ativar isto adiciona um hook a ~/.claude/settings.json.",
         approvalsConfirmTitle: "Adicionar um hook a ~/.claude/settings.json?",
         approvalsConfirmFormat: "Quando o Claude pedir permissão, ele vai executar:\n\n%@\n\nAntes, uma cópia datada do arquivo é salva ao lado dele. As chaves ficam ordenadas; seus próprios hooks continuam como estão.",
         approvalsConfirm: "Adicionar hook",
@@ -674,7 +695,13 @@ extension NotchAgentStrings {
         always: "Sempre",
         needsPermission: "precisa de permissão",
         allowed: "Permitido",
-        denied: "Negado")
+        denied: "Negado",
+        asks: "pergunta",
+        answerSent: "Resposta enviada",
+        other: "Outra…",
+        otherPlaceholder: "Sua resposta…",
+        send: "Enviar",
+        next: "Próxima")
 
     static let es = NotchAgentStrings(
         title: "Agentes de IA",
@@ -795,8 +822,8 @@ extension NotchAgentStrings {
         stepWeb: "Busca en la web",
         stepPlan: "Planifica",
         stepDelegate: "Delega",
-        approvalsTitle: "Responder a las solicitudes de permiso de Claude",
-        approvalsCaption: "Claude espera hasta 30 segundos a que elijas Permitir o Denegar en la Dynamic Island y después pregunta en el terminal. Al activarlo se añade un hook a ~/.claude/settings.json.",
+        approvalsTitle: "Responder a las solicitudes y preguntas de Claude",
+        approvalsCaption: "Las solicitudes de permiso de Claude esperan hasta 30 segundos en la Dynamic Island y sus preguntas hasta 2 minutos; el terminal pregunta a la vez. Al activarlo se añade un hook a ~/.claude/settings.json.",
         approvalsConfirmTitle: "¿Añadir un hook a ~/.claude/settings.json?",
         approvalsConfirmFormat: "Cuando Claude pida permiso, ejecutará:\n\n%@\n\nAntes se guarda junto al archivo una copia con la fecha. Sus claves se ordenan; tus propios hooks no cambian.",
         approvalsConfirm: "Añadir hook",
@@ -812,7 +839,13 @@ extension NotchAgentStrings {
         always: "Siempre",
         needsPermission: "necesita permiso",
         allowed: "Permitido",
-        denied: "Denegado")
+        denied: "Denegado",
+        asks: "pregunta",
+        answerSent: "Respuesta enviada",
+        other: "Otra…",
+        otherPlaceholder: "Tu respuesta…",
+        send: "Enviar",
+        next: "Siguiente")
 
     static let sk = NotchAgentStrings(
         title: "AI agenti",
@@ -933,8 +966,8 @@ extension NotchAgentStrings {
         stepWeb: "Hľadá na webe",
         stepPlan: "Plánuje",
         stepDelegate: "Deleguje",
-        approvalsTitle: "Odpovedať na žiadosti Claude o povolenie",
-        approvalsCaption: "Claude čaká až 30 sekúnd na Povoliť alebo Zamietnuť v Dynamic Island, potom sa spýta v termináli. Zapnutím sa do ~/.claude/settings.json pridá hook.",
+        approvalsTitle: "Odpovedať na žiadosti a otázky Claude",
+        approvalsCaption: "Žiadosti Claude o povolenie čakajú v Dynamic Island až 30 sekúnd, jeho otázky až 2 minúty; terminál sa pýta zároveň. Zapnutím sa do ~/.claude/settings.json pridá hook.",
         approvalsConfirmTitle: "Pridať hook do ~/.claude/settings.json?",
         approvalsConfirmFormat: "Keď Claude požiada o povolenie, spustí:\n\n%@\n\nNajprv sa vedľa súboru uloží jeho kópia s dátumom. Kľúče sa zoradia; vaše vlastné hooky zostanú bez zmeny.",
         approvalsConfirm: "Pridať hook",
@@ -950,7 +983,13 @@ extension NotchAgentStrings {
         always: "Vždy",
         needsPermission: "potrebuje povolenie",
         allowed: "Povolené",
-        denied: "Zamietnuté")
+        denied: "Zamietnuté",
+        asks: "sa pýta",
+        answerSent: "Odpoveď odoslaná",
+        other: "Iné…",
+        otherPlaceholder: "Vaša odpoveď…",
+        send: "Odoslať",
+        next: "Ďalej")
 
     static let de = NotchAgentStrings(
         title: "KI-Agenten",
@@ -1071,8 +1110,8 @@ extension NotchAgentStrings {
         stepWeb: "Sucht im Web",
         stepPlan: "Plant",
         stepDelegate: "Delegiert",
-        approvalsTitle: "Berechtigungsanfragen von Claude beantworten",
-        approvalsCaption: "Claude wartet bis zu 30 Sekunden auf Erlauben oder Ablehnen in der Dynamic Island und fragt dann im Terminal. Beim Einschalten wird ~/.claude/settings.json ein Hook hinzugefügt.",
+        approvalsTitle: "Anfragen und Fragen von Claude beantworten",
+        approvalsCaption: "Berechtigungsanfragen von Claude warten bis zu 30 Sekunden in der Dynamic Island, seine Fragen bis zu 2 Minuten; das Terminal fragt gleichzeitig. Beim Einschalten wird ~/.claude/settings.json ein Hook hinzugefügt.",
         approvalsConfirmTitle: "Hook zu ~/.claude/settings.json hinzufügen?",
         approvalsConfirmFormat: "Wenn Claude um Erlaubnis fragt, führt es Folgendes aus:\n\n%@\n\nVorher wird daneben eine Kopie der Datei mit Datum gespeichert. Die Schlüssel werden sortiert; deine eigenen Hooks bleiben, wie sie sind.",
         approvalsConfirm: "Hook hinzufügen",
@@ -1088,7 +1127,13 @@ extension NotchAgentStrings {
         always: "Immer",
         needsPermission: "braucht Erlaubnis",
         allowed: "Erlaubt",
-        denied: "Abgelehnt")
+        denied: "Abgelehnt",
+        asks: "fragt",
+        answerSent: "Antwort gesendet",
+        other: "Andere…",
+        otherPlaceholder: "Deine Antwort…",
+        send: "Senden",
+        next: "Weiter")
 
     static let fr = NotchAgentStrings(
         title: "Agents IA",
@@ -1209,8 +1254,8 @@ extension NotchAgentStrings {
         stepWeb: "Cherche sur le web",
         stepPlan: "Planifie",
         stepDelegate: "Délègue",
-        approvalsTitle: "Répondre aux demandes d’autorisation de Claude",
-        approvalsCaption: "Claude attend jusqu’à 30 secondes que vous choisissiez Autoriser ou Refuser dans la Dynamic Island, puis pose la question dans le terminal. L’activer ajoute un hook à ~/.claude/settings.json.",
+        approvalsTitle: "Répondre aux demandes et questions de Claude",
+        approvalsCaption: "Les demandes d’autorisation de Claude attendent jusqu’à 30 secondes dans la Dynamic Island, ses questions jusqu’à 2 minutes ; le terminal demande en même temps. L’activer ajoute un hook à ~/.claude/settings.json.",
         approvalsConfirmTitle: "Ajouter un hook à ~/.claude/settings.json\u{00A0}?",
         approvalsConfirmFormat: "Quand Claude demandera une autorisation, il exécutera\u{00A0}:\n\n%@\n\nUne copie datée du fichier est d’abord enregistrée à côté. Ses clés sont triées et vos propres hooks restent tels quels.",
         approvalsConfirm: "Ajouter le hook",
@@ -1226,7 +1271,13 @@ extension NotchAgentStrings {
         always: "Toujours",
         needsPermission: "demande une autorisation",
         allowed: "Autorisé",
-        denied: "Refusé")
+        denied: "Refusé",
+        asks: "pose une question",
+        answerSent: "Réponse envoyée",
+        other: "Autre…",
+        otherPlaceholder: "Votre réponse…",
+        send: "Envoyer",
+        next: "Suivant")
 
     static let it = NotchAgentStrings(
         title: "Agenti IA",
@@ -1347,8 +1398,8 @@ extension NotchAgentStrings {
         stepWeb: "Cerca sul web",
         stepPlan: "Pianifica",
         stepDelegate: "Delega",
-        approvalsTitle: "Rispondere alle richieste di autorizzazione di Claude",
-        approvalsCaption: "Claude attende fino a 30 secondi che tu scelga Consenti o Rifiuta nella Dynamic Island, poi chiede nel terminale. Attivandolo si aggiunge un hook a ~/.claude/settings.json.",
+        approvalsTitle: "Rispondere alle richieste e domande di Claude",
+        approvalsCaption: "Le richieste di autorizzazione di Claude attendono fino a 30 secondi nella Dynamic Island, le sue domande fino a 2 minuti; il terminale chiede nello stesso momento. Attivandolo si aggiunge un hook a ~/.claude/settings.json.",
         approvalsConfirmTitle: "Aggiungere un hook a ~/.claude/settings.json?",
         approvalsConfirmFormat: "Quando Claude chiederà un’autorizzazione, eseguirà:\n\n%@\n\nPrima viene salvata accanto al file una sua copia con la data. Le chiavi vengono ordinate; i tuoi hook restano invariati.",
         approvalsConfirm: "Aggiungi hook",
@@ -1364,7 +1415,13 @@ extension NotchAgentStrings {
         always: "Sempre",
         needsPermission: "chiede il permesso",
         allowed: "Consentito",
-        denied: "Rifiutato")
+        denied: "Rifiutato",
+        asks: "chiede",
+        answerSent: "Risposta inviata",
+        other: "Altro…",
+        otherPlaceholder: "La tua risposta…",
+        send: "Invia",
+        next: "Avanti")
 
     static let ru = NotchAgentStrings(
         title: "ИИ-агенты",
@@ -1485,8 +1542,8 @@ extension NotchAgentStrings {
         stepWeb: "Ищет в сети",
         stepPlan: "Планирует",
         stepDelegate: "Поручает",
-        approvalsTitle: "Отвечать на запросы разрешений Claude",
-        approvalsCaption: "Claude до 30 секунд ждёт «Разрешить» или «Отклонить» в Dynamic Island, а потом спрашивает в терминале. При включении в ~/.claude/settings.json добавляется хук.",
+        approvalsTitle: "Отвечать на запросы и вопросы Claude",
+        approvalsCaption: "Запросы разрешений Claude ждут в Dynamic Island до 30 секунд, вопросы — до 2 минут; терминал спрашивает одновременно. При включении в ~/.claude/settings.json добавляется хук.",
         approvalsConfirmTitle: "Добавить хук в ~/.claude/settings.json?",
         approvalsConfirmFormat: "Когда Claude попросит разрешение, он выполнит:\n\n%@\n\nСначала рядом сохраняется копия файла с датой. Ключи будут упорядочены; ваши хуки останутся как есть.",
         approvalsConfirm: "Добавить хук",
@@ -1502,7 +1559,13 @@ extension NotchAgentStrings {
         always: "Всегда",
         needsPermission: "требует разрешения",
         allowed: "Разрешено",
-        denied: "Отклонено")
+        denied: "Отклонено",
+        asks: "спрашивает",
+        answerSent: "Ответ отправлен",
+        other: "Другое…",
+        otherPlaceholder: "Ваш ответ…",
+        send: "Отправить",
+        next: "Далее")
 
     static let tr = NotchAgentStrings(
         title: "YZ Ajanları",
@@ -1623,8 +1686,8 @@ extension NotchAgentStrings {
         stepWeb: "Web’de arıyor",
         stepPlan: "Planlıyor",
         stepDelegate: "Görev veriyor",
-        approvalsTitle: "Claude’un izin isteklerini yanıtla",
-        approvalsCaption: "Claude, Dynamic Island’da İzin ver veya Reddet için 30 saniyeye kadar bekler, sonra terminalde sorar. Açtığınızda ~/.claude/settings.json dosyasına bir hook eklenir.",
+        approvalsTitle: "Claude’un isteklerini ve sorularını yanıtla",
+        approvalsCaption: "Claude’un izin istekleri Dynamic Island’da 30 saniyeye, soruları 2 dakikaya kadar bekler; terminal de aynı anda sorar. Açtığınızda ~/.claude/settings.json dosyasına bir hook eklenir.",
         approvalsConfirmTitle: "~/.claude/settings.json dosyasına hook eklensin mi?",
         approvalsConfirmFormat: "Claude izin istediğinde şunu çalıştıracak:\n\n%@\n\nÖnce dosyanın tarihli bir kopyası yanına kaydedilir. Anahtarlar sıralanır; kendi hook’larınız olduğu gibi kalır.",
         approvalsConfirm: "Hook ekle",
@@ -1640,7 +1703,13 @@ extension NotchAgentStrings {
         always: "Her zaman",
         needsPermission: "izin istiyor",
         allowed: "İzin verildi",
-        denied: "Reddedildi")
+        denied: "Reddedildi",
+        asks: "soruyor",
+        answerSent: "Yanıt gönderildi",
+        other: "Diğer…",
+        otherPlaceholder: "Yanıtınız…",
+        send: "Gönder",
+        next: "İleri")
 
     static let ja = NotchAgentStrings(
         title: "AIエージェント",
@@ -1761,8 +1830,8 @@ extension NotchAgentStrings {
         stepWeb: "Web 検索",
         stepPlan: "計画",
         stepDelegate: "委任",
-        approvalsTitle: "Claudeの許可リクエストに応答",
-        approvalsCaption: "ClaudeはDynamic Islandで「許可」か「拒否」を最大30秒待ち、その後ターミナルで確認します。オンにすると~/.claude/settings.jsonにフックが追加されます。",
+        approvalsTitle: "Claudeのリクエストと質問に応答",
+        approvalsCaption: "Claudeの許可リクエストはDynamic Islandで最大30秒、質問は最大2分待ちます。ターミナルでも同時に確認します。オンにすると~/.claude/settings.jsonにフックが追加されます。",
         approvalsConfirmTitle: "~/.claude/settings.jsonにフックを追加しますか？",
         approvalsConfirmFormat: "Claudeが許可を求めるときに次を実行します：\n\n%@\n\n先にファイルの日付付きコピーを同じ場所に保存します。キーは並べ替えられますが、ご自身のフックはそのままです。",
         approvalsConfirm: "フックを追加",
@@ -1778,7 +1847,13 @@ extension NotchAgentStrings {
         always: "常に許可",
         needsPermission: "許可が必要です",
         allowed: "許可しました",
-        denied: "拒否しました")
+        denied: "拒否しました",
+        asks: "質問があります",
+        answerSent: "回答を送信しました",
+        other: "その他…",
+        otherPlaceholder: "回答を入力…",
+        send: "送信",
+        next: "次へ")
 
     static let ko = NotchAgentStrings(
         title: "AI 에이전트",
@@ -1899,8 +1974,8 @@ extension NotchAgentStrings {
         stepWeb: "웹 검색",
         stepPlan: "계획",
         stepDelegate: "위임",
-        approvalsTitle: "Claude의 권한 요청에 응답",
-        approvalsCaption: "Claude는 Dynamic Island에서 허용 또는 거부를 최대 30초 기다린 뒤 터미널에서 묻습니다. 켜면 ~/.claude/settings.json에 훅이 추가됩니다.",
+        approvalsTitle: "Claude의 요청과 질문에 응답",
+        approvalsCaption: "Claude의 권한 요청은 Dynamic Island에서 최대 30초, 질문은 최대 2분 기다리며 터미널에서도 동시에 묻습니다. 켜면 ~/.claude/settings.json에 훅이 추가됩니다.",
         approvalsConfirmTitle: "~/.claude/settings.json에 훅을 추가할까요?",
         approvalsConfirmFormat: "Claude가 권한을 요청할 때 다음을 실행합니다:\n\n%@\n\n먼저 파일의 날짜별 사본을 옆에 저장합니다. 키는 정렬되며, 직접 추가한 훅은 그대로 유지됩니다.",
         approvalsConfirm: "훅 추가",
@@ -1916,7 +1991,13 @@ extension NotchAgentStrings {
         always: "항상 허용",
         needsPermission: "권한 필요",
         allowed: "허용함",
-        denied: "거부함")
+        denied: "거부함",
+        asks: "질문 있음",
+        answerSent: "답변을 보냄",
+        other: "기타…",
+        otherPlaceholder: "답변 입력…",
+        send: "보내기",
+        next: "다음")
 
     static let zhHans = NotchAgentStrings(
         title: "AI 智能体",
@@ -2037,8 +2118,8 @@ extension NotchAgentStrings {
         stepWeb: "网络搜索",
         stepPlan: "规划",
         stepDelegate: "委派",
-        approvalsTitle: "回应 Claude 的权限请求",
-        approvalsCaption: "Claude 会在 Dynamic Island 中最多等待 30 秒让你选择允许或拒绝，之后改在终端中询问。开启后会向 ~/.claude/settings.json 添加一个钩子。",
+        approvalsTitle: "回应 Claude 的请求和提问",
+        approvalsCaption: "Claude 的权限请求会在 Dynamic Island 中最多等待 30 秒，提问最多等待 2 分钟；终端会同时询问。开启后会向 ~/.claude/settings.json 添加一个钩子。",
         approvalsConfirmTitle: "要向 ~/.claude/settings.json 添加钩子吗？",
         approvalsConfirmFormat: "Claude 请求权限时将运行：\n\n%@\n\n会先在旁边保存一份带日期的文件副本。键会被排序；你自己的钩子保持不变。",
         approvalsConfirm: "添加钩子",
@@ -2054,7 +2135,13 @@ extension NotchAgentStrings {
         always: "始终允许",
         needsPermission: "需要权限",
         allowed: "已允许",
-        denied: "已拒绝")
+        denied: "已拒绝",
+        asks: "在提问",
+        answerSent: "已发送回答",
+        other: "其他…",
+        otherPlaceholder: "你的回答…",
+        send: "发送",
+        next: "下一个")
 
     static let zhTW = NotchAgentStrings(
         title: "AI 代理",
@@ -2175,8 +2262,8 @@ extension NotchAgentStrings {
         stepWeb: "網路搜尋",
         stepPlan: "規劃",
         stepDelegate: "委派",
-        approvalsTitle: "回應 Claude 的權限請求",
-        approvalsCaption: "Claude 會在 Dynamic Island 中最多等待 30 秒讓你選擇允許或拒絕，之後改在終端機中詢問。開啟後會在 ~/.claude/settings.json 加入一個掛鉤。",
+        approvalsTitle: "回應 Claude 的請求和提問",
+        approvalsCaption: "Claude 的權限請求會在 Dynamic Island 中最多等待 30 秒，提問最多等待 2 分鐘；終端機會同時詢問。開啟後會在 ~/.claude/settings.json 加入一個掛鉤。",
         approvalsConfirmTitle: "要在 ~/.claude/settings.json 加入掛鉤嗎？",
         approvalsConfirmFormat: "Claude 要求權限時會執行：\n\n%@\n\n會先在旁邊儲存一份附日期的檔案副本。鍵會重新排序；你自己的掛鉤維持不變。",
         approvalsConfirm: "加入掛鉤",
@@ -2192,7 +2279,13 @@ extension NotchAgentStrings {
         always: "一律允許",
         needsPermission: "需要權限",
         allowed: "已允許",
-        denied: "已拒絕")
+        denied: "已拒絕",
+        asks: "在提問",
+        answerSent: "已送出回答",
+        other: "其他…",
+        otherPlaceholder: "你的回答…",
+        send: "送出",
+        next: "下一個")
 
     static let zhHK = NotchAgentStrings(
         title: "AI 代理",
@@ -2313,8 +2406,8 @@ extension NotchAgentStrings {
         stepWeb: "網上搜尋",
         stepPlan: "規劃",
         stepDelegate: "委派",
-        approvalsTitle: "回應 Claude 的權限請求",
-        approvalsCaption: "Claude 會在 Dynamic Island 中最多等待 30 秒讓你選擇允許或拒絕，之後改在終端機中詢問。開啟後會在 ~/.claude/settings.json 加入一個掛鉤。",
+        approvalsTitle: "回應 Claude 的請求和提問",
+        approvalsCaption: "Claude 的權限請求會在 Dynamic Island 中最多等待 30 秒，提問最多等待 2 分鐘；終端機會同時詢問。開啟後會在 ~/.claude/settings.json 加入一個掛鉤。",
         approvalsConfirmTitle: "要在 ~/.claude/settings.json 加入掛鉤嗎？",
         approvalsConfirmFormat: "Claude 要求權限時會執行：\n\n%@\n\n會先在旁邊儲存一份附日期的檔案副本。鍵會重新排序；你自己的掛鉤維持不變。",
         approvalsConfirm: "加入掛鉤",
@@ -2330,5 +2423,11 @@ extension NotchAgentStrings {
         always: "一律允許",
         needsPermission: "需要權限",
         allowed: "已允許",
-        denied: "已拒絕")
+        denied: "已拒絕",
+        asks: "在提問",
+        answerSent: "已送出回答",
+        other: "其他…",
+        otherPlaceholder: "你的回答…",
+        send: "送出",
+        next: "下一個")
 }

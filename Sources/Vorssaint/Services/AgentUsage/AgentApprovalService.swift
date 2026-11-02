@@ -4,7 +4,7 @@
 import AppKit
 import Darwin
 
-/// Claude's permission requests, asked in the notch. It listens only while
+/// Claude's permission requests and questions, asked in the notch. It listens only while
 /// its hook is in Claude's settings and the AI page can show, and nothing
 /// starts from `init`. Nothing is allowed or denied without a click: a request
 /// left alone, or one Claude stops waiting for, goes back to the terminal.
@@ -257,8 +257,22 @@ final class AgentApprovalService: ObservableObject {
                 }
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + AgentApprovalSupport.wait) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + approval.wait) { [weak self] in
             self?.answer(approval.id, allow: nil)
+        }
+    }
+
+    /// A question waits; the island makes room for it.
+    var asking: Bool { pending.contains(where: \.isQuestion) }
+
+    /// Claude's questions answered, a pick list each, the card saying so a moment.
+    func answer(_ id: UUID, picks: [[String]]) {
+        guard connections[id] != nil, let index = pending.firstIndex(where: { $0.id == id }),
+              let asked = pending[index].asked else { return }
+        reply(id, allow: true, asked: asked, answers: AgentApprovalSupport.answers(to: pending[index].questions, picks: picks))
+        pending[index].outcome = .allowed
+        DispatchQueue.main.asyncAfter(deadline: .now() + AgentApprovalSupport.answerNote) { [weak self] in
+            self?.remove(id)
         }
     }
 
@@ -295,17 +309,19 @@ final class AgentApprovalService: ObservableObject {
     }
 
     /// Ends the request's connection and stops following its transcript.
-    private func reply(_ id: UUID, allow: Bool?, rules: NSArray? = nil) {
+    private func reply(_ id: UUID, allow: Bool?, rules: NSArray? = nil, asked: NSArray? = nil, answers: [String: Any]? = nil) {
         guard let connection = connections.removeValue(forKey: id) else { return }
-        Self.send(allow, rules: rules, to: connection.fd)
+        Self.send(allow, rules: rules, asked: asked, answers: answers, to: connection.fd)
         connection.source.cancel()
         queue.async { [weak self] in self?.followers.removeValue(forKey: id)?.source.cancel() }
     }
 
     /// The card goes; with the last one, the island goes back as it was.
     private func remove(_ id: UUID) {
-        guard pending.contains(where: { $0.id == id }) else { return }
+        guard let gone = pending.first(where: { $0.id == id }) else { return }
         pending.removeAll { $0.id == id }
+        // The room a question took is given back.
+        if gone.isQuestion { NotchService.shared.refreshPresentation() }
         guard pending.isEmpty else { return }
         let island = NotchService.shared
         if opened { island.collapse() } else if pinned { island.pinned = false }
@@ -313,8 +329,9 @@ final class AgentApprovalService: ObservableObject {
         pinned = false
     }
 
-    private static func send(_ allow: Bool?, rules: NSArray? = nil, to fd: Int32) {
-        let response = AgentApprovalSupport.response(allow: allow, rules: rules)
+    private static func send(_ allow: Bool?, rules: NSArray? = nil, asked: NSArray? = nil, answers: [String: Any]? = nil,
+                             to fd: Int32) {
+        let response = AgentApprovalSupport.response(allow: allow, rules: rules, asked: asked, answers: answers)
         _ = response.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
     }
 }
