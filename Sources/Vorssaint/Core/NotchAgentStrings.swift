@@ -152,6 +152,8 @@ struct NotchAgentStrings {
     let next: String
     /// Closes a finished turn's card.
     let ok: String
+    /// Leaves the typed answer, back to the picks' own button.
+    let cancelTyping: String
 
     func tokens(_ count: String) -> String { String(format: tokensFormat, count) }
     func cached(_ share: String) -> String { String(format: cachedFormat, share) }
@@ -416,7 +418,8 @@ extension NotchAgentStrings {
         otherPlaceholder: "Your answer…",
         send: "Send",
         next: "Next",
-        ok: "OK")
+        ok: "OK",
+        cancelTyping: "Cancel")
 
     static let uk = NotchAgentStrings(
         title: "ШІ-агенти",
@@ -561,7 +564,8 @@ extension NotchAgentStrings {
         otherPlaceholder: "Ваша відповідь…",
         send: "Надіслати",
         next: "Далі",
-        ok: "OK")
+        ok: "OK",
+        cancelTyping: "Скасувати")
 
     static let ptBR = NotchAgentStrings(
         title: "Agentes de IA",
@@ -706,7 +710,8 @@ extension NotchAgentStrings {
         otherPlaceholder: "Sua resposta…",
         send: "Enviar",
         next: "Próxima",
-        ok: "OK")
+        ok: "OK",
+        cancelTyping: "Cancelar")
 
     static let es = NotchAgentStrings(
         title: "Agentes de IA",
@@ -851,7 +856,8 @@ extension NotchAgentStrings {
         otherPlaceholder: "Tu respuesta…",
         send: "Enviar",
         next: "Siguiente",
-        ok: "OK")
+        ok: "OK",
+        cancelTyping: "Cancelar")
 
     static let sk = NotchAgentStrings(
         title: "AI agenti",
@@ -996,7 +1002,8 @@ extension NotchAgentStrings {
         otherPlaceholder: "Vaša odpoveď…",
         send: "Odoslať",
         next: "Ďalej",
-        ok: "OK")
+        ok: "OK",
+        cancelTyping: "Zrušiť")
 
     static let de = NotchAgentStrings(
         title: "KI-Agenten",
@@ -1141,7 +1148,8 @@ extension NotchAgentStrings {
         otherPlaceholder: "Deine Antwort…",
         send: "Senden",
         next: "Weiter",
-        ok: "OK")
+        ok: "OK",
+        cancelTyping: "Abbrechen")
 
     static let fr = NotchAgentStrings(
         title: "Agents IA",
@@ -1286,7 +1294,8 @@ extension NotchAgentStrings {
         otherPlaceholder: "Votre réponse…",
         send: "Envoyer",
         next: "Suivant",
-        ok: "OK")
+        ok: "OK",
+        cancelTyping: "Annuler")
 
     static let it = NotchAgentStrings(
         title: "Agenti IA",
@@ -1431,7 +1440,8 @@ extension NotchAgentStrings {
         otherPlaceholder: "La tua risposta…",
         send: "Invia",
         next: "Avanti",
-        ok: "OK")
+        ok: "OK",
+        cancelTyping: "Annulla")
 
     static let ru = NotchAgentStrings(
         title: "ИИ-агенты",
@@ -1576,7 +1586,8 @@ extension NotchAgentStrings {
         otherPlaceholder: "Ваш ответ…",
         send: "Отправить",
         next: "Далее",
-        ok: "OK")
+        ok: "OK",
+        cancelTyping: "Отмена")
 
     static let tr = NotchAgentStrings(
         title: "YZ Ajanları",
@@ -1721,7 +1732,8 @@ extension NotchAgentStrings {
         otherPlaceholder: "Yanıtınız…",
         send: "Gönder",
         next: "İleri",
-        ok: "Tamam")
+        ok: "Tamam",
+        cancelTyping: "Vazgeç")
 
     static let ja = NotchAgentStrings(
         title: "AIエージェント",
@@ -1866,7 +1878,8 @@ extension NotchAgentStrings {
         otherPlaceholder: "回答を入力…",
         send: "送信",
         next: "次へ",
-        ok: "OK")
+        ok: "OK",
+        cancelTyping: "キャンセル")
 
     static let ko = NotchAgentStrings(
         title: "AI 에이전트",
@@ -2011,7 +2024,8 @@ extension NotchAgentStrings {
         otherPlaceholder: "답변 입력…",
         send: "보내기",
         next: "다음",
-        ok: "확인")
+        ok: "확인",
+        cancelTyping: "취소")
 
     static let zhHans = NotchAgentStrings(
         title: "AI 智能体",
@@ -2156,7 +2170,8 @@ extension NotchAgentStrings {
         otherPlaceholder: "你的回答…",
         send: "发送",
         next: "下一个",
-        ok: "好")
+        ok: "好",
+        cancelTyping: "取消")
 
     static let zhTW = NotchAgentStrings(
         title: "AI 代理",
@@ -2301,7 +2316,8 @@ extension NotchAgentStrings {
         otherPlaceholder: "你的回答…",
         send: "送出",
         next: "下一個",
-        ok: "好")
+        ok: "好",
+        cancelTyping: "取消")
 
     static let zhHK = NotchAgentStrings(
         title: "AI 代理",
@@ -2446,5 +2462,6 @@ extension NotchAgentStrings {
         otherPlaceholder: "你的回答…",
         send: "送出",
         next: "下一個",
-        ok: "好")
+        ok: "好",
+        cancelTyping: "取消")
 }

@@ -547,23 +547,33 @@ private struct NotchAgentQuestionForm: View {
         .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: on)
     }
 
-    /// An answer of one's own, and the button that sends several picks.
+    /// An answer of one's own, and the button that sends several picks, with
+    /// or without it. The cross gives the picks back their own button.
     private var footer: some View {
         HStack(spacing: 8) {
             if typing {
-                TextField(text.otherPlaceholder, text: $typed)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-                    .focused($focused)
-                    .onSubmit(submitTyped)
-                    .onExitCommand { typing = false }
-                    .padding(.horizontal, 12)
-                    .frame(height: 30)
-                    .background(.white.opacity(0.07), in: Capsule(style: .continuous))
-                    .overlay(Capsule(style: .continuous).strokeBorder(tint.opacity(focused ? 0.55 : 0.2)))
-                    .accessibilityLabel(text.other)
+                HStack(spacing: 6) {
+                    TextField(text.otherPlaceholder, text: $typed)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 13))
+                        .focused($focused)
+                        .onSubmit(submitTyped)
+                        .onExitCommand(perform: stopTyping)
+                        .accessibilityLabel(text.other)
+                    Button(action: stopTyping) {
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 13)).foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help(text.cancelTyping)
+                    .accessibilityLabel(text.cancelTyping)
+                }
+                .padding(.leading, 12)
+                .padding(.trailing, 8)
+                .frame(height: 30)
+                .background(.white.opacity(0.07), in: Capsule(style: .continuous))
+                .overlay(Capsule(style: .continuous).strokeBorder(tint.opacity(focused ? 0.55 : 0.2)))
                 pill(isLast ? text.send : text.next, fill: .white, ink: .black, action: submitTyped)
-                    .disabled(answer.isEmpty)
+                    .disabled(answer.isEmpty && (!question.multiple || picked.isEmpty))
             } else {
                 pill(text.other, fill: .white.opacity(0.12), ink: .white, action: startTyping)
                 if question.multiple {
@@ -591,9 +601,16 @@ private struct NotchAgentQuestionForm: View {
         DispatchQueue.main.async { focused = true }
     }
 
+    private func stopTyping() {
+        typing = false
+        typed = ""
+    }
+
+    /// The typed answer, joining any picks; an empty field sends the picks alone.
     private func submitTyped() {
-        guard !answer.isEmpty, index < picks.count else { return }
-        picks[index] = question.multiple ? picks[index] + [answer] : [answer]
+        guard index < picks.count else { return }
+        if !answer.isEmpty { picks[index] = question.multiple ? picks[index] + [answer] : [answer] }
+        guard !picks[index].isEmpty else { return }
         advance()
     }
 
