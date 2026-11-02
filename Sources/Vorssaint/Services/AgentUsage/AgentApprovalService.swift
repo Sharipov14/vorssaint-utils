@@ -34,6 +34,9 @@ final class AgentApprovalService: ObservableObject {
     private var connections: [UUID: (source: DispatchSourceRead, fd: Int32)] = [:]
     /// On `queue`: each waiting request's transcript, to see it answered elsewhere.
     private var followers: [UUID: TranscriptFollower] = [:]
+    /// Sessions whose request was answered on a card: their next finished turn
+    /// is told on one too, however short, wherever their window is.
+    private var answered: Set<String> = []
     /// What the first card changed about the island, undone after the last.
     private var opened = false
     private var pinned = false
@@ -298,14 +301,16 @@ final class AgentApprovalService: ObservableObject {
             defer { sessions.pageDidDisappear() }
             let session = sessions.sessions.first { $0.log == log }
             let island = NotchService.shared
-            guard let self, !(session.map(AgentSessionsService.inFront) ?? false), !island.expanded || island.showsAgentRequests,
+            // Answered on a card, the session is followed here, not in its window.
+            let here = self?.answered.remove(Self.session(of: log)) != nil
+            guard let self, here || !(session.map(AgentSessionsService.inFront) ?? false),
+                  !island.expanded || island.showsAgentRequests,
                   let reply = Self.tail(of: log).flatMap({ AgentApprovalSupport.reply(inTail: $0, provider: provider) }) else {
                 return notice()
             }
             var card = AgentApproval(id: UUID(), cwd: session?.cwd ?? (project.isEmpty ? nil : project), tool: "",
                                      detail: nil, received: Date(),
-                                     session: ((log as NSString).lastPathComponent as NSString).deletingPathExtension,
-                                     rules: nil)
+                                     session: Self.session(of: log), rules: nil)
             card.agent = provider
             card.reply = reply
             card.host = session?.host?.name
@@ -327,6 +332,14 @@ final class AgentApprovalService: ObservableObject {
             if NotchService.shared.pointerOverIsland { return expire(id, after: 1) }
             remove(id)
         }
+    }
+
+    /// The log's session had a request answered on a card.
+    func answeredHere(_ log: String) -> Bool { answered.contains(Self.session(of: log)) }
+
+    /// Claude names a session's log after it.
+    private static func session(of log: String) -> String {
+        ((log as NSString).lastPathComponent as NSString).deletingPathExtension
     }
 
     /// OK on a finished turn's card.
@@ -363,6 +376,7 @@ final class AgentApprovalService: ObservableObject {
               let asked = pending[index].asked else { return }
         reply(id, allow: true, asked: asked, answers: AgentApprovalSupport.answers(to: pending[index].questions, picks: picks))
         pending[index].outcome = .allowed
+        if let session = pending[index].session { answered.insert(session) }
         DispatchQueue.main.asyncAfter(deadline: .now() + AgentApprovalSupport.answerNote) { [weak self] in
             self?.remove(id)
         }
@@ -375,6 +389,7 @@ final class AgentApprovalService: ObservableObject {
         reply(id, allow: allow, rules: always ? pending[index].rules : nil)
         guard let allow else { return remove(id) }
         pending[index].outcome = allow ? .allowed : .denied
+        if let session = pending[index].session { answered.insert(session) }
         DispatchQueue.main.asyncAfter(deadline: .now() + AgentApprovalSupport.answerNote) { [weak self] in
             self?.remove(id)
         }

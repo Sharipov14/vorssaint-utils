@@ -665,9 +665,10 @@ final class AgentUsageService: ObservableObject {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.running, self.session == session else { return }
             switch event {
-            case .finished(let provider, let duration, _, _, _, _):
+            case .finished(let provider, let duration, _, _, _, let file):
+                // A session answered in the island is told there however short its turn.
                 guard self.providers.contains(provider), let minimum = NotchAgentSupport.finishMinimum(),
-                      duration >= minimum else { return }
+                      duration >= minimum || AgentApprovalService.shared.answeredHere(file) else { return }
             case .limitWarning(let provider, _), .limitReset(let provider, _):
                 guard self.providers.contains(provider), NotchAgentSupport.limitThreshold() != nil else { return }
             case .budgetReached:
