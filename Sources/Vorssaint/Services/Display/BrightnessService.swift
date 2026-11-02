@@ -2112,30 +2112,13 @@ final class BrightnessService: ObservableObject {
                     forgetWriteOnlyDDCPath(pathKey)
                     let ceiling = BrightnessSupport.sanitizedMaximum(maximum)
                     let hardware = BrightnessSupport.normalized(current: current, maximum: ceiling)
-                    let wantsExtendedDimming = pathKey.map {
-                        extendedDimmingPaths().contains($0)
-                    } ?? false
-                    if wantsExtendedDimming { extendedDimmingIDs.insert(id) }
-                    if wantsExtendedDimming { captureGammaBaselineIfNeeded(id) }
-                    let extendsDimming = wantsExtendedDimming
-                        && gammaBaselines[id]?.fingerprint == Self.displayFingerprint(id)
                     stateLock.lock()
                     let remembered = rememberedLevel(for: id)
                     stateLock.unlock()
-                    var level = extendsDimming
-                        ? BrightnessSupport.extendedDimmingLevel(
-                            hardware: hardware, remembered: remembered,
-                            pictureDimmed: dimmedDisplays.contains(id))
-                        : hardware
-                    if extendsDimming {
-                        if !previousTopology.contains(id) {
-                            level = BrightnessSupport.reconnectedDimLevel(level)
-                        }
-                        let picture = BrightnessSupport.extendedDimmingComponents(for: level).picture
-                        if picture < 0.999 || dimmedDisplays.contains(id) {
-                            _ = applySoftwareDim(id, value: picture)
-                        }
-                    }
+                    let (level, extendsDimming) = resolveExtendedDimming(
+                        id, pathKey: pathKey, hardware: hardware, remembered: remembered,
+                        reconnected: !previousTopology.contains(id),
+                        preferred: &extendedDimmingIDs)
                     built[candidate.index] = BrightnessDisplay(
                         id: id, name: built[candidate.index].name, isBuiltIn: false,
                         method: .ddc, isActive: true, brightness: level,
@@ -2149,24 +2132,28 @@ final class BrightnessService: ObservableObject {
                     stateLock.unlock()
                     softwareIndices.remove(candidate.index)
                 case .writeOnly:
-                    if let pathKey, extendedDimmingPaths().contains(pathKey) {
-                        extendedDimmingIDs.insert(id)
-                    }
                     rememberWriteOnlyDDCPath(pathKey)
                     // Reads fail on some monitors whose writes still work:
                     // keep the slider, seeded from this session's last value.
+                    // A read that fails once is enough to land here, so the
+                    // extra dimming chosen for the monitor has to survive it.
                     stateLock.lock()
-                    let remembered = rememberedLevel(for: id) ?? 0.5
-                    let seed = routes[id]?.extendedDimming == true
-                        ? BrightnessSupport.extendedDimmingComponents(for: remembered).hardware
-                        : remembered
+                    let remembered = rememberedLevel(for: id)
+                    let hardware = routes[id]?.extendedDimming == true
+                        ? BrightnessSupport.extendedDimmingComponents(for: remembered ?? 0.5).hardware
+                        : remembered ?? 0.5
                     stateLock.unlock()
+                    let (seed, extendsDimming) = resolveExtendedDimming(
+                        id, pathKey: pathKey, hardware: hardware, remembered: remembered,
+                        reconnected: !previousTopology.contains(id),
+                        preferred: &extendedDimmingIDs)
                     built[candidate.index] = BrightnessDisplay(
                         id: id, name: built[candidate.index].name, isBuiltIn: false,
                         method: .ddc, isActive: true, brightness: seed,
                         readable: false, canChooseDimming: pathKey != nil)
                     newRoutes[id] = Route(method: .ddc, service: matched.service,
-                                          maximum: 100, ddcPathKey: pathKey)
+                                          maximum: 100, ddcPathKey: pathKey,
+                                          extendedDimming: extendsDimming)
                     softwareIndices.remove(candidate.index)
                 case .dead:
                     forgetWriteOnlyDDCPath(pathKey)
@@ -2296,6 +2283,30 @@ final class BrightnessService: ObservableObject {
             self.refreshKeyboardLight()
             self.syncKeyTap()
         }
+    }
+
+    /// The slider level of a DDC display and whether its extra dimming is on,
+    /// putting back the picture dim the level implies. Shared by monitors that
+    /// answer reads and write-only ones, so the choice holds on both.
+    private func resolveExtendedDimming(_ id: CGDirectDisplayID, pathKey: String?,
+                                        hardware: Double, remembered: Double?,
+                                        reconnected: Bool,
+                                        preferred: inout Set<CGDirectDisplayID>) -> (level: Double, extends: Bool) {
+        guard let pathKey, extendedDimmingPaths().contains(pathKey) else { return (hardware, false) }
+        preferred.insert(id)
+        captureGammaBaselineIfNeeded(id)
+        guard gammaBaselines[id]?.fingerprint == Self.displayFingerprint(id) else { return (hardware, false) }
+        var level = BrightnessSupport.extendedDimmingLevel(
+            hardware: hardware, remembered: remembered,
+            pictureDimmed: dimmedDisplays.contains(id))
+        if reconnected {
+            level = BrightnessSupport.reconnectedDimLevel(level)
+        }
+        let picture = BrightnessSupport.extendedDimmingComponents(for: level).picture
+        if picture < 0.999 || dimmedDisplays.contains(id) {
+            _ = applySoftwareDim(id, value: picture)
+        }
+        return (level, true)
     }
 
     // MARK: - Writes (work queue)
