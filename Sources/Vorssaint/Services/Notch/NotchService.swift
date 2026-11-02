@@ -166,6 +166,8 @@ final class NotchService: ObservableObject {
     @Published private var captureContentHeight: CGFloat?
     /// Kept after closing, so the next Fan Control detail opens at its size.
     @Published private var fanDetailHeight: CGFloat?
+    /// Claude's requests shown on their own, measured.
+    @Published private var agentRequestHeight: CGFloat?
     @Published private(set) var power = PowerReading()
     @Published private var musicDetailVisible = false
 
@@ -875,8 +877,9 @@ final class NotchService: ObservableObject {
                                         ? agentsContentHeight(width: geometry.contentWidth) : nil)
     }
 
-    /// The AI page is as tall as the cards it shows; nil while the logs are
-    /// first read, when the page fills the island with its progress.
+    /// The AI page is as tall as the cards it shows, and never shorter than its
+    /// Live tab needs; nil while the logs are first read, when the page fills
+    /// the island with its progress.
     private func agentsContentHeight(width: CGFloat) -> CGFloat? {
         let usage = AgentUsageService.shared.snapshot
         let enabled = NotchAgentSupport.providers()
@@ -888,7 +891,7 @@ final class NotchService: ObservableObject {
         let providers = enabled.filter { usage.seen.contains($0) || ($0 == .codex && !accounts.isEmpty)
             || ($0 == .claude && claudeAccount != nil) }
         guard !providers.isEmpty else { return 0 }
-        return NotchAgentSupport.contentHeight(NotchAgentSupport.rows(
+        return NotchAgentSupport.pageHeight(NotchAgentSupport.rows(
             NotchAgentSupport.tiles(cards: NotchAgentSupport.cards(), providers: providers, codexAccounts: accounts,
                                     claudeAccount: claudeAccount),
             width: width))
@@ -952,7 +955,11 @@ final class NotchService: ObservableObject {
             }
             return captureControlsLayout.size
         }
-        if expanded { return showingCommandBar ? commandBarSurfaceSize : expandedSize }
+        if expanded {
+            if showingCommandBar { return commandBarSurfaceSize }
+            if showsAgentRequests { return geometry.agentRequestSize(contentHeight: agentRequestHeight ?? geometry.pageBudget) }
+            return expandedSize
+        }
         if dragPlaceholder { return CGSize(width: geometry.peek.width, height: geometry.safeContentTop + 66) }
         if let notice {
             guard noticeExpanded else { return geometry.noticeSize(wings: notice.wings(in: geometry)) }
@@ -983,6 +990,14 @@ final class NotchService: ObservableObject {
         guard !geometry.floats, !fullscreenCompact, captureControls == nil, !expanded, !dragPlaceholder else { return 0 }
         if let notice { return noticeExpanded ? 0 : geometry.noticeShift(notice.wings(in: geometry)) }
         return namedMusicWings.map { ($0.trailing - $0.leading) / 2 } ?? 0
+    }
+
+    /// A request from Claude, a permission or a question, or a turn an agent
+    /// finished opens the AI page as a notification would: its card alone,
+    /// with nothing else on screen.
+    var showsAgentRequests: Bool {
+        expanded && selected == .agents && !showingCommandBar && !showingSections && !showingAppPanel
+            && selectedMetric == nil && !AgentApprovalService.shared.pending.isEmpty
     }
 
     /// The open island around the Command Bar: the bar's width within the
@@ -1096,6 +1111,7 @@ final class NotchService: ObservableObject {
     }
 
     var presentationWindow: NSPanel? { panel }
+    var pointerOverIsland: Bool { windowHost?.containsHover(NSEvent.mouseLocation) == true }
     /// User actions can open the island even when automatic full-screen feedback is hidden.
     var acceptsUserInteraction: Bool {
         running && !suspended && panel != nil
@@ -1155,7 +1171,12 @@ final class NotchService: ObservableObject {
         if !NotchFileToolsService.shared.offersMediaDrop { endFileDrop() }
         // Paused while the island is away, the section still stops at once
         // when it is turned off.
-        if !NotchAgentSupport.isEnabled() { AgentUsageService.shared.stop() }
+        if !NotchAgentSupport.isEnabled() {
+            AgentUsageService.shared.stop()
+            AgentSessionsService.shared.stop()
+        }
+        // Permission requests are heard while the page can show; locked, they go back to the terminal.
+        AgentApprovalService.shared.syncWithPreferences()
         guard !suspended else {
             if session.canRunTimer { NotchTimerService.shared.syncWithPreferences() }
             else { NotchTimerService.shared.suspend() }
@@ -1263,6 +1284,8 @@ final class NotchService: ObservableObject {
         NotchLyricsService.shared.stop()
         NotchFileToolsService.shared.stop()
         AgentUsageService.shared.stop()
+        AgentSessionsService.shared.stop()
+        AgentApprovalService.shared.stop()
         guard running else { return }
         running = false
         NotchTimerService.shared.stop()
@@ -2720,7 +2743,8 @@ final class NotchService: ObservableObject {
         presented.surfaceShift = surfaceShift
         windowHost?.present(size: size, geometry: presented, animated: animated,
                             transitionContent: contentTransition,
-                            quickAccess: expanded && captureControls == nil && !showingCommandBar && !access.buttons.isEmpty
+                            quickAccess: expanded && captureControls == nil && !showingCommandBar && !showsAgentRequests
+                                && !access.buttons.isEmpty
                                 ? access : nil,
                             revealFromHidden: !hiddenInFullscreen && captureControls == nil
                                 && UserDefaults.standard.bool(forKey: DefaultsKey.notchHideUntilHover)
@@ -3875,8 +3899,11 @@ final class NotchService: ObservableObject {
             // drops the candidate; the island takes the next one.
             if event.type == .keyDown, event.window === self.panel, event.keyCode == 53,
                (self.panel?.firstResponder as? NSTextView)?.hasMarkedText() == true { return event }
-            // The Command Bar inside the island reads its own keys, Escape included.
-            if event.type == .keyDown, event.window === self.panel, self.showingCommandBar { return event }
+            // The Command Bar inside the island reads its own keys, Escape
+            // included, as a question's typed answer does.
+            if event.type == .keyDown, event.window === self.panel, self.showingCommandBar || self.showsAgentRequests {
+                return event
+            }
             if event.type == .keyDown, event.window === self.panel, self.captureControls == nil {
                 let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
                 if modifiers == .command, event.charactersIgnoringModifiers?.lowercased() == "k" {
@@ -4273,13 +4300,18 @@ final class NotchService: ObservableObject {
             }
         }
         switch event {
-        case .finished(let provider, let duration, let cost, _, _):
-            show(NotchNotice(event: .agents, title: text.finished(provider.displayName),
-                             detail: [AgentFormat.duration(duration, locale: locale), cost > 0 ? AgentFormat.cost(cost) : ""]
-                                .filter { !$0.isEmpty }.joined(separator: " · "),
-                             symbol: provider.symbol, agent: provider))
-            // After the notice, the companion cheers the finished task.
-            reactMascot(.celebrate)
+        case .finished(let provider, let duration, let cost, _, let project, let file):
+            let notice = { [weak self] in
+                self?.show(NotchNotice(event: .agents, title: text.finished(provider.displayName),
+                                       detail: [AgentFormat.duration(duration, locale: locale), cost > 0 ? AgentFormat.cost(cost) : ""]
+                                          .filter { !$0.isEmpty }.joined(separator: " · "),
+                                       symbol: provider.symbol, agent: provider))
+                // After the notice, the companion cheers the finished task.
+                self?.reactMascot(.celebrate)
+            }
+            // Claude's and Codex's logs keep the last reply, which their card shows.
+            guard provider == .claude || provider == .codex else { return notice() }
+            AgentApprovalService.shared.finish(provider, log: file, project: project) { notice() }
         case .limitWarning(let provider, let limit):
             show(NotchNotice(event: .agents, title: "\(provider.displayName) · \(window(limit))",
                              detail: NotchAgentSupport.limitShare(limit, display: NotchAgentSupport.limitDisplay(),
@@ -5214,6 +5246,19 @@ extension NotchService {
         commandBarHeight = nil
         measuredCommandBarHeight = nil
         CommandBarService.shared.islandDidClose()
+    }
+
+    /// Claude's requests are as tall as their cards, measured as they change.
+    func updateAgentRequestHeight(_ height: CGFloat) {
+        guard height.isFinite, height > 0 else { return }
+        let measured = ceil(height)
+        // On the next turn, as the Command Bar's height: a resize asked for
+        // while SwiftUI measures reaches the screen late.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.agentRequestHeight != measured else { return }
+            self.agentRequestHeight = measured
+            if self.showsAgentRequests { self.refreshPresentation() }
+        }
     }
 
     func updateCommandBarHeight(_ height: CGFloat) {

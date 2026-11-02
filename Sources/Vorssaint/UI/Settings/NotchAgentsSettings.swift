@@ -8,6 +8,7 @@ import SwiftUI
 struct NotchAgentsSettingsControls: View {
     @ObservedObject private var l10n = L10n.shared
     @ObservedObject private var usage = AgentUsageService.shared
+    @ObservedObject private var approvals = AgentApprovalService.shared
     @AppStorage(DefaultsKey.notchAgentsClaude) private var claude = true
     @AppStorage(DefaultsKey.notchAgentsClaudeProfile) private var claudeProfile = ""
     @AppStorage(DefaultsKey.notchAgentsCodex) private var codex = true
@@ -28,6 +29,9 @@ struct NotchAgentsSettingsControls: View {
     @State private var dragging: NotchAgentCard?
     @State private var roots: [AgentProvider: Bool] = [:]
     @State private var claudeApp: URL?
+    /// The settings.json change waiting for the person's yes.
+    @State private var approvalChange: AgentApprovalService.Change?
+    @State private var approvalError: String?
     /// Read from the file while the section is off and the service is idle.
     @State private var claudeAppFileCheck: Date?
 
@@ -103,6 +107,7 @@ struct NotchAgentsSettingsControls: View {
                                       provider: claude ? .claude : codex ? .codex : opencode ? .opencode : .copilot)
                     .padding(.leading, settingsRowTextInset)
             }
+            if claude { approvalsRow }
 
             Divider()
             Text(text.alerts).font(.subheadline.weight(.medium))
@@ -153,7 +158,10 @@ struct NotchAgentsSettingsControls: View {
         .onAppear {
             findRoots()
             // An agent turned off is not read at all, not even for its status.
-            if claude { findClaudeApp() }
+            if claude {
+                findClaudeApp()
+                approvals.refresh()
+            }
         }
         .onChange(of: claude) { _, on in if on { findClaudeApp() } }
         .onChange(of: claudeProfile) { _, _ in
@@ -268,6 +276,50 @@ struct NotchAgentsSettingsControls: View {
     private func findRoots() {
         let found = AgentLogRoot.all(claudeProfile: ClaudeAccountProfile(directory: claudeProfile)).filter(\.exists).map(\.provider)
         roots = Dictionary(uniqueKeysWithValues: AgentProvider.allCases.map { ($0, found.contains($0)) })
+    }
+
+    /// Claude's settings change only after the person has seen what is added.
+    private var approvalsRow: some View {
+        SettingsRow(symbol: "hand.raised", title: text.approvalsTitle, caption: text.approvalsCaption) {
+            Toggle(text.approvalsTitle, isOn: Binding(get: { approvals.installed }, set: setApprovals))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .disabled(approvals.socketPath == nil)
+        }
+        .confirmationDialog(text.approvalsConfirmTitle,
+                            isPresented: Binding(get: { approvalChange != nil }, set: { if !$0 { approvalChange = nil } }),
+                            titleVisibility: .visible) {
+            Button(text.approvalsConfirm) {
+                if let change = approvalChange { apply(change) }
+            }
+            Button(FeatureStrings.clipboard(l10n.language).cancel, role: .cancel) { approvalChange = nil }
+        } message: {
+            Text(text.approvalsConfirmMessage(approvalChange?.command ?? ""))
+        }
+        .alert(approvalError ?? "", isPresented: Binding(get: { approvalError != nil }, set: { if !$0 { approvalError = nil } })) {}
+    }
+
+    /// Turning it on asks first; turning it off takes out only this app's hook.
+    private func setApprovals(_ on: Bool) {
+        do {
+            let change = try approvals.change(installing: on)
+            if on { approvalChange = change } else { try approvals.apply(change) }
+        } catch {
+            approvalError = approvalMessage(error)
+        }
+    }
+
+    private func apply(_ change: AgentApprovalService.Change) {
+        approvalChange = nil
+        do { try approvals.apply(change) } catch { approvalError = approvalMessage(error) }
+    }
+
+    private func approvalMessage(_ error: Error) -> String {
+        switch error as? AgentApprovalService.Failure {
+        case .unreadable: return text.approvalsUnreadable
+        case .changed: return text.approvalsChanged
+        default: return text.approvalsWriteFailed
+        }
     }
 
     private func switchRow(_ symbol: String, _ title: String, isOn: Binding<Bool>) -> some View {

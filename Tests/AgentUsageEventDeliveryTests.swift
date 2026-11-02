@@ -15,6 +15,12 @@ enum AgentUsageEventDeliveryTests {
         static func dailyBudget() -> Double? { budget }
     }
 
+    final class AgentApprovalService {
+        static let shared = AgentApprovalService()
+        var answered: Set<String> = []
+        func answeredHere(_ log: String) -> Bool { answered.contains(log) }
+    }
+
     final class Events {
         var values: [AgentUsageEvent] = []
         func send(_ event: AgentUsageEvent) { values.append(event) }
@@ -45,7 +51,7 @@ enum AgentUsageEventDeliveryTests {
         }
         let host = Host()
         let finished = AgentUsageEvent.finished(provider: .claude, duration: 20, cost: 0.5,
-                                                  tokens: 30, project: "example")
+                                                  tokens: 30, project: "example", file: "main")
         let window = AgentLimitWindow(id: "test", kind: .session, minutes: 300, scope: nil,
                                       usedPercent: 90, resetsAt: nil)
         let events: [AgentUsageEvent] = [finished, .limitWarning(provider: .claude, window: window),
@@ -88,5 +94,16 @@ enum AgentUsageEventDeliveryTests {
         host.report(events[3])
         drain()
         suite.expect(host.events.values.isEmpty, "duration and disabled-alert preferences still filter current events")
+
+        // A turn shorter than the minimum, in a session answered in the island.
+        AgentApprovalService.shared.answered = ["main"]
+        defer { AgentApprovalService.shared.answered = [] }
+        host.report(finished)
+        drain()
+        NotchAgentSupport.minimum = nil
+        host.report(finished)
+        drain()
+        suite.expect(host.events.values == [finished],
+                     "a session answered in the island is told of its turn however short, unless finishes are off")
     }
 }

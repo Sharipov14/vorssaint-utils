@@ -2561,6 +2561,13 @@ enum FeatureCatalogTests {
                 && BrightnessSupport.extendedDimmingLevel(hardware: 0.5, remembered: 0.1,
                                                              pictureDimmed: true) == 0.625,
                "a rebuild keeps only an app-applied picture dim and honors a changed hardware level")
+        let writeOnlyDim = 0.1
+        suite.expect(BrightnessSupport.extendedDimmingLevel(
+            hardware: BrightnessSupport.extendedDimmingComponents(for: writeOnlyDim).hardware,
+            remembered: writeOnlyDim, pictureDimmed: true) == writeOnlyDim
+                && BrightnessSupport.extendedDimmingLevel(hardware: 0.5, remembered: nil,
+                                                             pictureDimmed: false) == 0.625,
+               "a monitor that stops answering reads keeps its extra dimming level")
         suite.expect(BrightnessSupport.steppedKeyboardLightLevel(current: 0.5, direction: -1)
                 == 0.5 - BrightnessSupport.keyboardLightStep
                 && BrightnessSupport.steppedKeyboardLightLevel(current: 0.5, direction: 1)

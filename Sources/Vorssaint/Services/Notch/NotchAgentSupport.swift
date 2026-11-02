@@ -4,10 +4,11 @@
 import CoreGraphics
 import Foundation
 
-/// The cards the AI page can show, in the order a person arranges them. Raw
-/// values are stored in the saved order, so cases are never renamed.
+/// The cards the Statistics tab can show, in the order a person arranges them.
+/// Raw values are stored in the saved order, so cases are never renamed; the
+/// `live` and `sessions` a saved order may still name became the Live tab.
 enum NotchAgentCard: String, CaseIterable, Identifiable {
-    case limits, spend, live, trend, models, projects, activity, resets
+    case limits, spend, trend, models, projects, activity, resets
 
     var id: String { rawValue }
 
@@ -15,7 +16,6 @@ enum NotchAgentCard: String, CaseIterable, Identifiable {
         switch self {
         case .limits: return "gauge.with.dots.needle.33percent"
         case .spend: return "dollarsign.circle"
-        case .live: return "waveform.path.ecg"
         case .trend: return "chart.bar.xaxis"
         case .models: return "cpu"
         case .projects: return "folder"
@@ -283,6 +283,8 @@ enum NotchAgentSupport {
     static let spacing: CGFloat = 10
     static let cardHeight: CGFloat = 96
     static let chartHeight: CGFloat = 118
+    /// The Live tab's least room: a few sessions, or a line per idle agent.
+    static let liveHeight: CGFloat = 132
     /// An account card also says when it was checked, and the Resets card
     /// beside account cards names the account its resets belong to.
     static let accountCardHeight: CGFloat = 116
@@ -361,6 +363,11 @@ enum NotchAgentSupport {
     static func contentHeight(_ rows: [[NotchAgentTile]]) -> CGFloat {
         guard !rows.isEmpty else { return 0 }
         return rows.map(height).reduce(0, +) + spacing * CGFloat(rows.count - 1)
+    }
+
+    /// Both tabs share one height, so switching between them never resizes the island.
+    static func pageHeight(_ rows: [[NotchAgentTile]]) -> CGFloat {
+        max(contentHeight(rows), liveHeight)
     }
 }
 
