@@ -748,6 +748,9 @@ private struct NotchAgentSessionRow: View {
             }
             if let showLabel {
                 round("arrow.up.forward", showLabel, action: show).disabled(preview)
+            } else {
+                // A row with nothing to open keeps its times in the column.
+                Color.clear.frame(width: 22, height: 22)
             }
         }
         .padding(.leading, CGFloat(session.depth) * 14)
@@ -879,12 +882,14 @@ private struct NotchAgentSessionRow: View {
             }
             ports
             status
-            Text(elapsed)
-                .font(.system(size: 11.5, weight: .medium))
-                .monospacedDigit()
-                .foregroundStyle(session.kind.tint)
-                .lineLimit(1)
-                .frame(minWidth: 40, alignment: .trailing)
+            // As wide as the longest usual time, so the status dots line up.
+            ZStack(alignment: .trailing) {
+                Text("00:00:00").hidden()
+                Text(elapsed).foregroundStyle(session.kind.tint)
+            }
+            .font(.system(size: 11.5, weight: .medium))
+            .monospacedDigit()
+            .lineLimit(1)
         }
     }
 
