@@ -86,6 +86,7 @@ enum NotchKeyMonitorTests {
         var showingAppPanel = false
         var showingSections = false
         var showingCommandBar = false
+        var showsAgentRequests = false
         var geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 1470, height: 956),
                                      safeAreaTop: 32, cameraWidth: 180)
         var fullWidthRow = false
@@ -179,6 +180,12 @@ enum NotchKeyMonitorTests {
         suite.expect(NSEvent.handler?(escape) != nil && NSEvent.handler?(commandK) != nil && actions.isEmpty,
                      "the island hands Escape and its shortcuts to the Command Bar open inside it")
         service.showingCommandBar = false
+        // Claude's question keeps Escape for its typed answer, and stays open.
+        service.showsAgentRequests = true
+        actions = []
+        suite.expect(NSEvent.handler?(escape) != nil && actions.isEmpty,
+                     "Escape in a question's typed answer cancels the typing, not the question")
+        service.showsAgentRequests = false
         actions = []
         suite.expect(NSEvent.handler?(escape) == nil && actions == ["stepBack"],
                      "without the bar, Escape steps back through the island again")

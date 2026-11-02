@@ -151,6 +151,11 @@ enum NotchMascotTests {
         defaults.set(NotchMascotPalette.lilac.rawValue, forKey: DefaultsKey.notchMascotPalette)
         suite.expect(NotchMascotSupport.look(in: defaults) == NotchMascotLook(style: .robot, shape: .pill, palette: .lilac),
                      "style, shape and color are read as chosen")
+        suite.expect(NotchMascotSupport.look(for: .claude, in: defaults) == NotchMascotLook(style: .robot, shape: .pill, palette: .peach)
+                     && NotchMascotSupport.look(for: .codex, in: defaults).palette == .sky
+                     && NotchMascotSupport.look(for: .opencode, in: defaults).palette == .lilac
+                     && NotchMascotSupport.look(for: nil, in: defaults).palette == .lilac,
+                     "asking for Claude or Codex it wears the agent's colors, for any other the person's")
         defaults.set("cube", forKey: DefaultsKey.notchMascotShape)
         defaults.set("neon", forKey: DefaultsKey.notchMascotPalette)
         defaults.set("dragon", forKey: DefaultsKey.notchMascotStyle)
