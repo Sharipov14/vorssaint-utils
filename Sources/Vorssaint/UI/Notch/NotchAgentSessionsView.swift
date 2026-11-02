@@ -177,7 +177,7 @@ struct NotchAgentSessionsList: View {
 /// A tool call Claude waits to have allowed, or its questions answered,
 /// until the line along its foot runs out and only the terminal asks.
 /// Answered, here or elsewhere, it says so a moment, the companion reacting,
-/// then goes.
+/// then goes. A finished turn's card says so with its last reply.
 private struct NotchAgentApprovalCard: View {
     let approval: AgentApproval
     /// The name Claude gave the session, or its folder.
@@ -187,16 +187,15 @@ private struct NotchAgentApprovalCard: View {
     /// The state badge pops in once the card is in.
     @State private var popped = false
 
-    /// Only Claude asks for now.
-    private let agent = AgentProvider.claude
+    private var agent: AgentProvider { approval.agent }
     private static let amber = Color(red: 1, green: 0.62, blue: 0.22)
     private static let teal = Color(red: 0.13, green: 0.83, blue: 0.93)
     private static let radius: CGFloat = 22
     private static let companionSize: CGFloat = 52
 
     private var outcome: AgentApproval.Outcome? { approval.outcome }
-    /// Warm for a permission, cool for a question.
-    private var tint: Color { approval.isQuestion ? Self.teal : Self.amber }
+    /// Warm for a permission, cool for a question, green for a finished turn.
+    private var tint: Color { approval.isFinish ? .green : approval.isQuestion ? Self.teal : Self.amber }
 
     private var glow: Color {
         switch outcome {
@@ -208,7 +207,8 @@ private struct NotchAgentApprovalCard: View {
 
     private var status: String {
         switch outcome {
-        case nil: return approval.isQuestion ? text.asks : text.needsPermission
+        case nil: return approval.isFinish ? text.finished(agent.displayName)
+            : approval.isQuestion ? text.asks : text.needsPermission
         case .allowed: return approval.isQuestion ? text.answerSent : text.allowed
         case .denied: return text.denied
         case .elsewhere: return text.answered(in: approval.host)
@@ -217,7 +217,7 @@ private struct NotchAgentApprovalCard: View {
 
     private var mood: NotchMascotMood {
         switch outcome {
-        case nil: return .alert
+        case nil: return approval.isFinish ? .happy : .alert
         case .allowed, .elsewhere: return .happy
         case .denied: return .confused
         }
@@ -230,6 +230,12 @@ private struct NotchAgentApprovalCard: View {
                 header
                 if approval.isQuestion {
                     NotchAgentQuestionForm(approval: approval, text: text, tint: Self.teal)
+                } else if let reply = approval.reply {
+                    Text(reply)
+                        .font(.system(size: 15, weight: .semibold))
+                        .lineLimit(1)
+                        .help(reply)
+                    finishButtons
                 } else {
                     command
                     buttons
@@ -242,12 +248,15 @@ private struct NotchAgentApprovalCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background { surface }
         .overlay(alignment: .bottom) {
-            NotchAgentApprovalCountdown(deadline: approval.deadline, wait: approval.wait, tint: tint)
-                .opacity(outcome == nil ? 0.85 : 0)
+            // A finished turn waits longer under the pointer, so no line runs out.
+            if !approval.isFinish {
+                NotchAgentApprovalCountdown(deadline: approval.deadline, wait: approval.wait, tint: tint)
+                    .opacity(outcome == nil ? 0.85 : 0)
+            }
         }
         .clipShape(RoundedRectangle(cornerRadius: Self.radius, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: Self.radius, style: .continuous).strokeBorder(.white.opacity(0.08)))
-        .overlay(alignment: .topTrailing) { terminal }
+        .overlay(alignment: .topTrailing) { if !approval.isFinish { terminal } }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.35), value: outcome)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilityTitle)
@@ -255,7 +264,8 @@ private struct NotchAgentApprovalCard: View {
 
     /// A question's text and choices are read from the form itself.
     private var accessibilityTitle: String {
-        let parts = approval.isQuestion ? [agent.displayName, title, status]
+        let parts = approval.isFinish ? [status, title, approval.reply ?? ""]
+            : approval.isQuestion ? [agent.displayName, title, status]
             : [text.approval(agent.displayName, tool: approval.tool), title, outcome == nil ? "" : status, approval.detail ?? ""]
         return parts.filter { !$0.isEmpty }.joined(separator: ", ")
     }
@@ -281,7 +291,7 @@ private struct NotchAgentApprovalCard: View {
             if shown {
                 NotchMascotView(look: NotchMascotSupport.look(for: agent), mood: mood, size: size,
                                 cue: reacts && outcome == .allowed ? .celebrate : nil, cueID: outcome == .allowed ? 1 : 0,
-                                reaction: reacts ? .perk : nil)
+                                reaction: reacts ? approval.isFinish ? .celebrate : .perk : nil)
             } else {
                 NotchAgentMark(provider: agent, size: size * 0.5)
             }
@@ -309,7 +319,8 @@ private struct NotchAgentApprovalCard: View {
     /// What the card waits for, or how it ended.
     private var badge: some View {
         let (symbol, tint): (String, Color) = switch outcome {
-        case nil: approval.isQuestion ? ("questionmark", Self.teal) : ("exclamationmark", .orange)
+        case nil: approval.isFinish ? ("checkmark", .green)
+            : approval.isQuestion ? ("questionmark", Self.teal) : ("exclamationmark", .orange)
         case .allowed, .elsewhere: ("checkmark", .green)
         case .denied: ("xmark", Color(white: 0.45))
         }
@@ -376,6 +387,16 @@ private struct NotchAgentApprovalCard: View {
             }
         }
         .disabled(outcome != nil)
+    }
+
+    /// To the session's app, by its name, and away.
+    private var finishButtons: some View {
+        HStack(spacing: 8) {
+            if let host = approval.host {
+                pill(text.showIn(host), fill: .white, ink: .black) { AgentApprovalService.shared.showSession(of: approval.id) }
+            }
+            pill(text.ok, fill: .white.opacity(0.12), ink: .white) { AgentApprovalService.shared.dismiss(approval.id) }
+        }
     }
 
     /// Hands the question back and goes to the session, where its app's icon says.

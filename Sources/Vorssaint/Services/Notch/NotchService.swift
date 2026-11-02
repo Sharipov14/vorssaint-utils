@@ -992,8 +992,9 @@ final class NotchService: ObservableObject {
         return namedMusicWings.map { ($0.trailing - $0.leading) / 2 } ?? 0
     }
 
-    /// A request from Claude, a permission or a question, opens the AI page as
-    /// a notification would: its card alone, with nothing else on screen.
+    /// A request from Claude, a permission or a question, or a turn an agent
+    /// finished opens the AI page as a notification would: its card alone,
+    /// with nothing else on screen.
     var showsAgentRequests: Bool {
         expanded && selected == .agents && !showingCommandBar && !showingSections && !showingAppPanel
             && selectedMetric == nil && !AgentApprovalService.shared.pending.isEmpty
@@ -1110,6 +1111,7 @@ final class NotchService: ObservableObject {
     }
 
     var presentationWindow: NSPanel? { panel }
+    var pointerOverIsland: Bool { windowHost?.containsHover(NSEvent.mouseLocation) == true }
     /// User actions can open the island even when automatic full-screen feedback is hidden.
     var acceptsUserInteraction: Bool {
         running && !suspended && panel != nil
@@ -4287,13 +4289,18 @@ final class NotchService: ObservableObject {
             }
         }
         switch event {
-        case .finished(let provider, let duration, let cost, _, _):
-            show(NotchNotice(event: .agents, title: text.finished(provider.displayName),
-                             detail: [AgentFormat.duration(duration, locale: locale), cost > 0 ? AgentFormat.cost(cost) : ""]
-                                .filter { !$0.isEmpty }.joined(separator: " · "),
-                             symbol: provider.symbol, agent: provider))
-            // After the notice, the companion cheers the finished task.
-            reactMascot(.celebrate)
+        case .finished(let provider, let duration, let cost, _, let project, let file):
+            let notice = { [weak self] in
+                self?.show(NotchNotice(event: .agents, title: text.finished(provider.displayName),
+                                       detail: [AgentFormat.duration(duration, locale: locale), cost > 0 ? AgentFormat.cost(cost) : ""]
+                                          .filter { !$0.isEmpty }.joined(separator: " · "),
+                                       symbol: provider.symbol, agent: provider))
+                // After the notice, the companion cheers the finished task.
+                self?.reactMascot(.celebrate)
+            }
+            // Claude's and Codex's logs keep the last reply, which their card shows.
+            guard provider == .claude || provider == .codex else { return notice() }
+            AgentApprovalService.shared.finish(provider, log: file, project: project) { notice() }
         case .limitWarning(let provider, let limit):
             show(NotchNotice(event: .agents, title: "\(provider.displayName) · \(window(limit))",
                              detail: NotchAgentSupport.limitShare(limit, display: NotchAgentSupport.limitDisplay(),

@@ -4,10 +4,11 @@
 import AppKit
 import Darwin
 
-/// Claude's permission requests and questions, asked in the notch. It listens only while
-/// its hook is in Claude's settings and the AI page can show, and nothing
-/// starts from `init`. Nothing is allowed or denied without a click: a request
-/// left alone, or one Claude stops waiting for, goes back to the terminal.
+/// Claude's permission requests and questions, asked in the notch, and the
+/// turns Claude and Codex finish, told there. It listens only while its hook
+/// is in Claude's settings and the AI page can show, and nothing starts from
+/// `init`. Nothing is allowed or denied without a click: a request left alone,
+/// or one Claude stops waiting for, goes back to the terminal.
 final class AgentApprovalService: ObservableObject {
     static let shared = AgentApprovalService()
 
@@ -33,7 +34,7 @@ final class AgentApprovalService: ObservableObject {
     private var connections: [UUID: (source: DispatchSourceRead, fd: Int32)] = [:]
     /// On `queue`: each waiting request's transcript, to see it answered elsewhere.
     private var followers: [UUID: TranscriptFollower] = [:]
-    /// What the first request changed about the island, undone after the last.
+    /// What the first card changed about the island, undone after the last.
     private var opened = false
     private var pinned = false
 
@@ -64,7 +65,8 @@ final class AgentApprovalService: ObservableObject {
     /// Every waiting request goes back to the terminal.
     func stop() {
         for id in Array(connections.keys) { answer(id, allow: nil) }
-        for approval in pending { remove(approval.id) }
+        // A finished turn needs no hook, and goes on its own.
+        for approval in pending where !approval.isFinish { remove(approval.id) }
         guard let listener else { return }
         listener.cancel()
         self.listener = nil
@@ -216,8 +218,6 @@ final class AgentApprovalService: ObservableObject {
     // MARK: Asking
 
     private func hold(_ approval: AgentApproval, fd: Int32, peer: pid_t, trail: AgentApprovalTrail?) {
-        let island = NotchService.shared
-        let wasExpanded = island.expanded, wasPinned = island.pinned
         var approval = approval
         if peer > 0, let app = ResponsibleProcess.regularAppOwner(of: peer) {
             // "Visual Studio Code", where the running app calls itself "Code".
@@ -226,23 +226,11 @@ final class AgentApprovalService: ObservableObject {
             // Read while curl still runs: it shares Claude's terminal.
             approval.tty = AgentSessionsService.terminal(near: peer)
         }
-        let room = listener != nil && pending.count < AgentApprovalSupport.pendingLimit
-        if room {
-            // In first, so the island opens at the size the card takes.
-            pending.append(approval)
-            // Pinned, so the card waits for the click; unfocused, so typing goes on.
-            island.open(.agents, pinned: true, takeFocus: false)
-        }
         // An island that cannot show, locked or away, leaves it to the terminal.
-        guard room, island.expanded, island.selected == .agents else {
-            pending.removeAll { $0.id == approval.id }
+        guard listener != nil, pending.count < AgentApprovalSupport.pendingLimit, present(approval) else {
             Self.send(nil, to: fd)
             close(fd)
             return
-        }
-        if pending.count == 1 {
-            opened = !wasExpanded
-            pinned = !wasPinned
         }
         // Readable again only once curl is gone: Claude stopped waiting.
         let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: .main)
@@ -262,6 +250,112 @@ final class AgentApprovalService: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + approval.wait) { [weak self] in
             self?.answer(approval.id, allow: nil)
         }
+    }
+
+    /// Puts a card in the open island, pinned for it; false when the island
+    /// cannot show it, locked or away.
+    private func present(_ card: AgentApproval) -> Bool {
+        let island = NotchService.shared
+        let wasExpanded = island.expanded, wasPinned = island.pinned
+        // In first, so the island opens at the size the card takes.
+        pending.append(card)
+        // Pinned, so the card waits for the click; unfocused, so typing goes on.
+        island.open(.agents, pinned: true, takeFocus: false)
+        guard island.expanded, island.selected == .agents else {
+            pending.removeAll { $0.id == card.id }
+            return false
+        }
+        if pending.count == 1 {
+            opened = !wasExpanded
+            pinned = !wasPinned
+            // The sessions are watched while cards show, for their names and apps.
+            AgentSessionsService.shared.pageDidAppear()
+        }
+        return true
+    }
+
+    // MARK: Finished turns
+
+    /// A turn Claude or Codex finished, told on a card a moment, its last reply
+    /// and all. `notice` tells it instead where the session's own app is in
+    /// front, where the reply cannot be read, or where the island cannot show
+    /// it: away, or open on something else, which it does not take over.
+    func finish(_ provider: AgentProvider, log: String, project: String, notice: @escaping () -> Void) {
+        // A first look at the running sessions says whose app that is.
+        AgentSessionsService.shared.pageDidAppear()
+        finish(provider, log: log, project: project, notice: notice, looks: 0)
+    }
+
+    private func finish(_ provider: AgentProvider, log: String, project: String, notice: @escaping () -> Void, looks: Int) {
+        // ponytail: polls for the scan, a few tenths of a second; a callback
+        // from the sessions service if it ever takes longer.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            let sessions = AgentSessionsService.shared
+            if !sessions.loaded, looks < 6 {
+                self?.finish(provider, log: log, project: project, notice: notice, looks: looks + 1)
+                return
+            }
+            defer { sessions.pageDidDisappear() }
+            let session = sessions.sessions.first { $0.log == log }
+            let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
+            let island = NotchService.shared
+            guard let self, session?.host.map({ $0.pid != front }) ?? true, !island.expanded || island.showsAgentRequests,
+                  let reply = Self.tail(of: log).flatMap({ AgentApprovalSupport.reply(inTail: $0, provider: provider) }) else {
+                return notice()
+            }
+            var card = AgentApproval(id: UUID(), cwd: session?.cwd ?? (project.isEmpty ? nil : project), tool: "",
+                                     detail: nil, received: Date(),
+                                     session: ((log as NSString).lastPathComponent as NSString).deletingPathExtension,
+                                     rules: nil)
+            card.agent = provider
+            card.reply = reply
+            card.host = session?.host?.name
+            card.hostPID = session?.host?.pid
+            // One at a time, in place: the newest says the most.
+            if let index = pending.firstIndex(where: \.isFinish) {
+                pending[index] = card
+            } else if pending.count >= AgentApprovalSupport.pendingLimit || !present(card) {
+                return notice()
+            }
+            expire(card.id)
+        }
+    }
+
+    /// Goes once its time is up and the pointer is not on the island.
+    private func expire(_ id: UUID, after delay: TimeInterval = AgentApprovalSupport.finishWait) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, pending.contains(where: { $0.id == id }) else { return }
+            if NotchService.shared.pointerOverIsland { return expire(id, after: 1) }
+            remove(id)
+        }
+    }
+
+    /// OK on a finished turn's card.
+    func dismiss(_ id: UUID) { remove(id) }
+
+    /// Goes to the finished session, where its app's name says.
+    func showSession(of id: UUID) {
+        guard let card = pending.first(where: { $0.id == id }) else { return }
+        // Found first: the last card gone, the sessions are no longer watched.
+        let sessions = AgentSessionsService.shared
+        let session = sessions.sessions.first { $0.log?.hasSuffix("/\(card.session ?? "").jsonl") == true }
+        remove(id)
+        NotchService.shared.collapse()
+        if let session {
+            sessions.show(session)
+        } else if let pid = card.hostPID, let app = NSRunningApplication(processIdentifier: pid) {
+            AgentSessionsService.show(app, tty: nil, cwd: card.cwd)
+        }
+    }
+
+    /// The last stretch of a log, where its last reply is.
+    private static func tail(of path: String) -> Data? {
+        guard let handle = FileHandle(forReadingAtPath: path) else { return nil }
+        defer { try? handle.close() }
+        guard let end = try? handle.seekToEnd() else { return nil }
+        let read = UInt64(AgentApprovalSupport.replyRead)
+        try? handle.seek(toOffset: end > read ? end - read : 0)
+        return try? handle.readToEnd()
     }
 
     /// Claude's questions answered, a pick list each, the card saying so a moment.
@@ -324,6 +418,7 @@ final class AgentApprovalService: ObservableObject {
             if opened { island.collapse() } else if pinned { island.pinned = false }
             opened = false
             pinned = false
+            AgentSessionsService.shared.pageDidDisappear()
         }
         // The rest are as tall as they are, or the page behind them comes back.
         if island.expanded { island.refreshPresentation() }

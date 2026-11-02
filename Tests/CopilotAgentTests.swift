@@ -165,7 +165,7 @@ enum CopilotAgentTests {
         suite.expect(log.feed("assistant.turn_end", ["turnId": "0"], at: -5).isEmpty && log.state.turnOpen,
                      "an older Copilot turn end cannot close the current iteration")
         suite.expect(log.feed("assistant.turn_end", ["turnId": "1"])
-                        == [.finished(provider: .copilot, duration: 180, cost: 0, tokens: 0, project: "demo")]
+                        == [.finished(provider: .copilot, duration: 180, cost: 0, tokens: 0, project: "demo", file: "events.jsonl")]
                         && log.store.live.isEmpty && !log.state.turnOpen && log.requests == 3,
                      "only the final root response finishes the whole Copilot task once")
         suite.expect(log.feed("assistant.turn_end", ["turnId": "1"]).isEmpty,

@@ -154,7 +154,8 @@ struct AgentLiveSession: Equatable, Identifiable {
 
 /// Something worth a moment in the closed island.
 enum AgentUsageEvent: Equatable {
-    case finished(provider: AgentProvider, duration: TimeInterval, cost: Double, tokens: Int, project: String)
+    /// `file` is the turn's log, as the sessions name theirs.
+    case finished(provider: AgentProvider, duration: TimeInterval, cost: Double, tokens: Int, project: String, file: String)
     case limitWarning(provider: AgentProvider, window: AgentLimitWindow)
     case limitReset(provider: AgentProvider, window: AgentLimitWindow)
     case budgetReached(spent: Double, budget: Double)

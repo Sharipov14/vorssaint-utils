@@ -131,7 +131,7 @@ final class AgentUsageStore {
                 guard now.timeIntervalSince(end) <= Self.lateEnd else { continue }
                 events.append(.finished(provider: provider,
                                         duration: max(0, duration ?? end.timeIntervalSince(turn.started)),
-                                        cost: turn.cost, tokens: turn.tokens.total, project: turn.project))
+                                        cost: turn.cost, tokens: turn.tokens.total, project: turn.project, file: file))
             case .reset:
                 let baseFile = file.components(separatedBy: "#").first ?? file
                 forget(file: baseFile)

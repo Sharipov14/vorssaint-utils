@@ -45,7 +45,7 @@ enum AgentUsageEventDeliveryTests {
         }
         let host = Host()
         let finished = AgentUsageEvent.finished(provider: .claude, duration: 20, cost: 0.5,
-                                                  tokens: 30, project: "example")
+                                                  tokens: 30, project: "example", file: "main")
         let window = AgentLimitWindow(id: "test", kind: .session, minutes: 300, scope: nil,
                                       usedPercent: 90, resetsAt: nil)
         let events: [AgentUsageEvent] = [finished, .limitWarning(provider: .claude, window: window),

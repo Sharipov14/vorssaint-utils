@@ -150,6 +150,8 @@ struct NotchAgentStrings {
     let send: String
     /// To the next of Claude's questions, the last one sending them all.
     let next: String
+    /// Closes a finished turn's card.
+    let ok: String
 
     func tokens(_ count: String) -> String { String(format: tokensFormat, count) }
     func cached(_ share: String) -> String { String(format: cachedFormat, share) }
@@ -413,7 +415,8 @@ extension NotchAgentStrings {
         other: "Other…",
         otherPlaceholder: "Your answer…",
         send: "Send",
-        next: "Next")
+        next: "Next",
+        ok: "OK")
 
     static let uk = NotchAgentStrings(
         title: "ШІ-агенти",
@@ -535,7 +538,7 @@ extension NotchAgentStrings {
         stepPlan: "Планує",
         stepDelegate: "Доручає",
         approvalsTitle: "Відповідати на запити й питання Claude",
-        approvalsCaption: "Запити дозволів Claude чекають у Dynamic Island до 30 секунд, питання — до 2 хвилин; термінал питає одночасно. Увімкнення додає хук у ~/.claude/settings.json.",
+        approvalsCaption: "Запити дозволів Claude чекають у Dynamic Island до 30 секунд, а питання до 2 хвилин; термінал питає одночасно. Увімкнення додає хук у ~/.claude/settings.json.",
         approvalsConfirmTitle: "Додати хук у ~/.claude/settings.json?",
         approvalsConfirmFormat: "Коли Claude проситиме дозвіл, він виконає:\n\n%@\n\nСпершу поруч зберігається копія файлу з датою. Ключі буде впорядковано; ваші хуки залишаться як є.",
         approvalsConfirm: "Додати хук",
@@ -557,7 +560,8 @@ extension NotchAgentStrings {
         other: "Інше…",
         otherPlaceholder: "Ваша відповідь…",
         send: "Надіслати",
-        next: "Далі")
+        next: "Далі",
+        ok: "OK")
 
     static let ptBR = NotchAgentStrings(
         title: "Agentes de IA",
@@ -701,7 +705,8 @@ extension NotchAgentStrings {
         other: "Outra…",
         otherPlaceholder: "Sua resposta…",
         send: "Enviar",
-        next: "Próxima")
+        next: "Próxima",
+        ok: "OK")
 
     static let es = NotchAgentStrings(
         title: "Agentes de IA",
@@ -845,7 +850,8 @@ extension NotchAgentStrings {
         other: "Otra…",
         otherPlaceholder: "Tu respuesta…",
         send: "Enviar",
-        next: "Siguiente")
+        next: "Siguiente",
+        ok: "OK")
 
     static let sk = NotchAgentStrings(
         title: "AI agenti",
@@ -989,7 +995,8 @@ extension NotchAgentStrings {
         other: "Iné…",
         otherPlaceholder: "Vaša odpoveď…",
         send: "Odoslať",
-        next: "Ďalej")
+        next: "Ďalej",
+        ok: "OK")
 
     static let de = NotchAgentStrings(
         title: "KI-Agenten",
@@ -1133,7 +1140,8 @@ extension NotchAgentStrings {
         other: "Andere…",
         otherPlaceholder: "Deine Antwort…",
         send: "Senden",
-        next: "Weiter")
+        next: "Weiter",
+        ok: "OK")
 
     static let fr = NotchAgentStrings(
         title: "Agents IA",
@@ -1255,7 +1263,7 @@ extension NotchAgentStrings {
         stepPlan: "Planifie",
         stepDelegate: "Délègue",
         approvalsTitle: "Répondre aux demandes et questions de Claude",
-        approvalsCaption: "Les demandes d’autorisation de Claude attendent jusqu’à 30 secondes dans la Dynamic Island, ses questions jusqu’à 2 minutes ; le terminal demande en même temps. L’activer ajoute un hook à ~/.claude/settings.json.",
+        approvalsCaption: "Les demandes d’autorisation de Claude attendent jusqu’à 30 secondes dans la Dynamic Island, ses questions jusqu’à 2 minutes\u{00A0}; le terminal demande en même temps. L’activer ajoute un hook à ~/.claude/settings.json.",
         approvalsConfirmTitle: "Ajouter un hook à ~/.claude/settings.json\u{00A0}?",
         approvalsConfirmFormat: "Quand Claude demandera une autorisation, il exécutera\u{00A0}:\n\n%@\n\nUne copie datée du fichier est d’abord enregistrée à côté. Ses clés sont triées et vos propres hooks restent tels quels.",
         approvalsConfirm: "Ajouter le hook",
@@ -1277,7 +1285,8 @@ extension NotchAgentStrings {
         other: "Autre…",
         otherPlaceholder: "Votre réponse…",
         send: "Envoyer",
-        next: "Suivant")
+        next: "Suivant",
+        ok: "OK")
 
     static let it = NotchAgentStrings(
         title: "Agenti IA",
@@ -1421,7 +1430,8 @@ extension NotchAgentStrings {
         other: "Altro…",
         otherPlaceholder: "La tua risposta…",
         send: "Invia",
-        next: "Avanti")
+        next: "Avanti",
+        ok: "OK")
 
     static let ru = NotchAgentStrings(
         title: "ИИ-агенты",
@@ -1543,7 +1553,7 @@ extension NotchAgentStrings {
         stepPlan: "Планирует",
         stepDelegate: "Поручает",
         approvalsTitle: "Отвечать на запросы и вопросы Claude",
-        approvalsCaption: "Запросы разрешений Claude ждут в Dynamic Island до 30 секунд, вопросы — до 2 минут; терминал спрашивает одновременно. При включении в ~/.claude/settings.json добавляется хук.",
+        approvalsCaption: "Запросы разрешений Claude ждут в Dynamic Island до 30 секунд, а вопросы до 2 минут; терминал спрашивает одновременно. При включении в ~/.claude/settings.json добавляется хук.",
         approvalsConfirmTitle: "Добавить хук в ~/.claude/settings.json?",
         approvalsConfirmFormat: "Когда Claude попросит разрешение, он выполнит:\n\n%@\n\nСначала рядом сохраняется копия файла с датой. Ключи будут упорядочены; ваши хуки останутся как есть.",
         approvalsConfirm: "Добавить хук",
@@ -1565,7 +1575,8 @@ extension NotchAgentStrings {
         other: "Другое…",
         otherPlaceholder: "Ваш ответ…",
         send: "Отправить",
-        next: "Далее")
+        next: "Далее",
+        ok: "OK")
 
     static let tr = NotchAgentStrings(
         title: "YZ Ajanları",
@@ -1709,7 +1720,8 @@ extension NotchAgentStrings {
         other: "Diğer…",
         otherPlaceholder: "Yanıtınız…",
         send: "Gönder",
-        next: "İleri")
+        next: "İleri",
+        ok: "Tamam")
 
     static let ja = NotchAgentStrings(
         title: "AIエージェント",
@@ -1853,7 +1865,8 @@ extension NotchAgentStrings {
         other: "その他…",
         otherPlaceholder: "回答を入力…",
         send: "送信",
-        next: "次へ")
+        next: "次へ",
+        ok: "OK")
 
     static let ko = NotchAgentStrings(
         title: "AI 에이전트",
@@ -1997,7 +2010,8 @@ extension NotchAgentStrings {
         other: "기타…",
         otherPlaceholder: "답변 입력…",
         send: "보내기",
-        next: "다음")
+        next: "다음",
+        ok: "확인")
 
     static let zhHans = NotchAgentStrings(
         title: "AI 智能体",
@@ -2141,7 +2155,8 @@ extension NotchAgentStrings {
         other: "其他…",
         otherPlaceholder: "你的回答…",
         send: "发送",
-        next: "下一个")
+        next: "下一个",
+        ok: "好")
 
     static let zhTW = NotchAgentStrings(
         title: "AI 代理",
@@ -2285,7 +2300,8 @@ extension NotchAgentStrings {
         other: "其他…",
         otherPlaceholder: "你的回答…",
         send: "送出",
-        next: "下一個")
+        next: "下一個",
+        ok: "好")
 
     static let zhHK = NotchAgentStrings(
         title: "AI 代理",
@@ -2429,5 +2445,6 @@ extension NotchAgentStrings {
         other: "其他…",
         otherPlaceholder: "你的回答…",
         send: "送出",
-        next: "下一個")
+        next: "下一個",
+        ok: "好")
 }

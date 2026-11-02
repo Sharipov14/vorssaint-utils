@@ -28,10 +28,17 @@ struct AgentApproval: Identifiable, Equatable {
     var hostPID: Int32?
     var tty: String?
     var outcome: Outcome?
+    /// The agent the card is about; only Claude asks.
+    var agent = AgentProvider.claude
+    /// A finished turn's last reply, on a card that only says so.
+    var reply: String?
 
     var folder: String { cwd.map { ($0 as NSString).lastPathComponent } ?? "" }
     var isQuestion: Bool { !questions.isEmpty }
-    var wait: TimeInterval { isQuestion ? AgentApprovalSupport.questionWait : AgentApprovalSupport.wait }
+    var isFinish: Bool { reply != nil }
+    var wait: TimeInterval {
+        isFinish ? AgentApprovalSupport.finishWait : isQuestion ? AgentApprovalSupport.questionWait : AgentApprovalSupport.wait
+    }
     var deadline: Date { received.addingTimeInterval(wait) }
 }
 
@@ -113,6 +120,10 @@ enum AgentApprovalSupport {
     static let wait: TimeInterval = 30
     /// A question takes longer to read than a command.
     static let questionWait: TimeInterval = 120
+    /// A finished turn says so this long, longer while the pointer is on it.
+    static let finishWait: TimeInterval = 10
+    /// Read from a log's end for a finished turn's reply.
+    static let replyRead = 512 * 1024
     static let socketName = "agents.sock"
     /// `sun_path` holds 104 bytes, the terminating zero included.
     static let socketPathLimit = 103
@@ -292,6 +303,24 @@ enum AgentApprovalSupport {
             return AgentQuestion(text: text, header: header, options: picked, multiple: question["multiSelect"] as? Bool ?? false)
         }
         return questions.isEmpty || questions.count != asked.count ? nil : questions
+    }
+
+    /// A finished turn's last reply in its log's tail, as the Live tab reads
+    /// it; nil unless the tail ends with the turn finished.
+    // ponytail: a reply still being written shows the turn's earlier text;
+    // read again a moment later if that is ever seen.
+    static func reply(inTail data: Data, provider: AgentProvider) -> String? {
+        var activity = AgentActivity()
+        // The first line, cut off where the tail begins, reads as nothing.
+        for line in AgentActivitySupport.lines(data, partialStart: false).lines {
+            guard let object = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] else { continue }
+            switch provider {
+            case .claude: AgentActivitySupport.applyClaude(object, to: &activity)
+            case .codex: AgentActivitySupport.applyCodex(object, to: &activity)
+            default: return nil
+            }
+        }
+        return activity.state == .finished ? activity.reply : nil
     }
 
     /// Claude's answers keyed by question: the label picked or the text typed,

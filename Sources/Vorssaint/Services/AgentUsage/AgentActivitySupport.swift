@@ -81,7 +81,9 @@ struct AgentActivity: Equatable {
     }
 
     mutating func replied(_ text: String?) {
-        if let text = AgentActivitySupport.line(text, limit: AgentActivitySupport.replyLimit) { reply = text }
+        if let text = AgentActivitySupport.line(text.map(AgentActivitySupport.plain), limit: AgentActivitySupport.replyLimit) {
+            reply = text
+        }
     }
 
     /// Adds a change to its file, which moves to the top of the list.
@@ -151,6 +153,14 @@ enum AgentActivitySupport {
         let words = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         guard !words.isEmpty else { return nil }
         return words.count > limit ? String(words.prefix(limit - 1)) + "…" : words
+    }
+
+    /// A reply's Markdown read as text: no emphasis, code ticks or heading marks.
+    static func plain(_ text: String) -> String {
+        text.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "`", with: "")
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.drop { $0 == "#" } }
+            .joined(separator: "\n")
     }
 
     /// What a person asked, leaving out what the agent itself injects as a

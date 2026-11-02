@@ -8,6 +8,7 @@ enum AgentApprovalTests {
         suite.run("agent approvals: the hook in Claude's settings") { settings(suite) }
         suite.run("agent approvals: a request and its answer") { requests(suite) }
         suite.run("agent approvals: answered in the terminal") { trails(suite) }
+        suite.run("agent approvals: a finished turn's reply") { replies(suite) }
     }
 
     private static let socket = "/Users/o'neil/Library/Application Support/com.vorssaint.utils/agents.sock"
@@ -180,5 +181,35 @@ enum AgentApprovalTests {
                      "another call's result leaves the card")
         suite.expect(settles([call("t1", "ls -la"), result("t1", at: 4)]) && !settles([call("t1", "ls")]),
                      "a call Claude reworded still settles once it has its result, and not before")
+    }
+
+    private static func replies(_ suite: TestSuite) {
+        func line(_ object: [String: Any]) -> String {
+            String(data: try! JSONSerialization.data(withJSONObject: object), encoding: .utf8)!
+        }
+        func claude(_ id: String, _ stop: String, _ block: [String: Any], sidechain: Bool = false) -> String {
+            line(["type": "assistant", "isSidechain": sidechain,
+                  "message": ["id": id, "stop_reason": stop, "content": [block]]])
+        }
+        func tail(_ lines: [String]) -> Data { Data(("{\"cut off" + "\n" + lines.joined(separator: "\n") + "\n").utf8) }
+        let earlier = claude("m1", "tool_use", ["type": "text", "text": "Let me check."])
+        let thinking = claude("m2", "end_turn", ["type": "thinking", "thinking": "…"])
+        let text = claude("m2", "end_turn", ["type": "text", "text": "## Done\n\nAll **23** tests pass in `Tests`.\n- next"])
+        suite.expect(AgentApprovalSupport.reply(inTail: tail([earlier, thinking, text]), provider: .claude)
+                        == "Done All 23 tests pass in Tests. - next",
+                     "Claude's reply is its last message's text on one line, without Markdown marks")
+        suite.expect(AgentApprovalSupport.reply(inTail: tail([text, claude("s1", "end_turn", ["type": "text", "text": "sub"],
+                                                                           sidechain: true),
+                                                               line(["type": "system", "subtype": "turn_duration"])]),
+                                                provider: .claude) == "Done All 23 tests pass in Tests. - next",
+                     "a subagent's message and Claude's own notes after the reply are passed over")
+        suite.expect(AgentApprovalSupport.reply(inTail: tail([earlier]), provider: .claude) == nil,
+                     "a turn still going, its last message a step on the way, has no reply")
+        let complete = line(["type": "event_msg", "payload": ["type": "task_complete",
+                                                              "last_agent_message": "Fixed\nthe build."]])
+        suite.expect(AgentApprovalSupport.reply(inTail: tail([complete, line(["type": "turn_context"])]), provider: .codex)
+                        == "Fixed the build."
+                        && AgentApprovalSupport.reply(inTail: tail([complete]), provider: .opencode) == nil,
+                     "Codex's reply is what it said as the task completed; other agents have none here")
     }
 }
