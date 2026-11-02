@@ -33,8 +33,8 @@ extension AgentSessionsService {
     }
 }
 
-/// Claude's requests on their own while it asks a question: the open island
-/// shows them as a notification's card, and nothing else.
+/// Claude's requests on their own: the open island shows them as a
+/// notification's card, and nothing else.
 struct NotchAgentRequests: View {
     @ObservedObject private var approvals = AgentApprovalService.shared
     @ObservedObject private var sessions = AgentSessionsService.shared
@@ -68,16 +68,13 @@ struct NotchAgentSessionsList: View {
     @Binding var diff: AgentDiffTarget?
     @ObservedObject private var service = AgentSessionsService.shared
     @ObservedObject private var usage = AgentUsageService.shared
-    @ObservedObject private var approvals = AgentApprovalService.shared
     @Environment(\.locale) private var locale
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selected: String?
 
     var body: some View {
         let sessions = preview ? AgentSessionsSupport.sample(now: Date())
             : AgentSessionsSupport.shown(service.sessions, providers: providers)
         let orphans = preview ? [] : service.orphans
-        let pending = preview ? [] : approvals.pending
         // The usage reader names a turn after its log, as the sessions do.
         let turns = Dictionary(usage.snapshot.live.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let opened = diff.flatMap { target in
@@ -86,9 +83,9 @@ struct NotchAgentSessionsList: View {
         Group {
             if let opened {
                 NotchAgentDiffView(file: opened)
-            } else if pending.isEmpty && !preview && !service.loaded {
+            } else if !preview && !service.loaded {
                 ProgressView().controlSize(.small).frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if pending.isEmpty && sessions.isEmpty && orphans.isEmpty {
+            } else if sessions.isEmpty && orphans.isEmpty {
                 if recent.isEmpty {
                     NotchEmptyView(symbol: "terminal", message: text.noSessions)
                 } else {
@@ -97,10 +94,6 @@ struct NotchAgentSessionsList: View {
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: NotchAgentSupport.spacing) {
-                        ForEach(pending) { approval in
-                            NotchAgentApprovalCard(approval: approval, title: service.title(of: approval), text: text)
-                                .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
-                        }
                         if !sessions.isEmpty {
                             NotchAgentCardChrome {
                                 TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -113,7 +106,6 @@ struct NotchAgentSessionsList: View {
                         }
                         if !orphans.isEmpty { self.orphans }
                     }
-                    .animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.86), value: pending)
                 }
                 .scrollIndicators(.automatic)
             }

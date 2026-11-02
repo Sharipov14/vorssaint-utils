@@ -10,7 +10,7 @@ struct NotchView: View {
     @ObservedObject private var music = NotchMusicService.shared
     @ObservedObject private var launcher = QuickLauncherService.shared
     @ObservedObject private var updates = UpdateService.shared
-    /// A question from Claude takes the open island for itself.
+    /// A request from Claude takes the open island for itself.
     @ObservedObject private var approvals = AgentApprovalService.shared
     @AppStorage(DefaultsKey.notchLiquidGlassEnabled) private var glass = false
     @Environment(\.colorSchemeContrast) private var contrast

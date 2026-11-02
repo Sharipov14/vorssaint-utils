@@ -992,12 +992,11 @@ final class NotchService: ObservableObject {
         return namedMusicWings.map { ($0.trailing - $0.leading) / 2 } ?? 0
     }
 
-    /// A question from Claude opens the AI page as a notification would: its
-    /// card alone, with nothing else on screen. A permission request alone
-    /// stays among the sessions.
+    /// A request from Claude, a permission or a question, opens the AI page as
+    /// a notification would: its card alone, with nothing else on screen.
     var showsAgentRequests: Bool {
         expanded && selected == .agents && !showingCommandBar && !showingSections && !showingAppPanel
-            && selectedMetric == nil && AgentApprovalService.shared.asking
+            && selectedMetric == nil && !AgentApprovalService.shared.pending.isEmpty
     }
 
     /// The open island around the Command Bar: the bar's width within the
@@ -5231,7 +5230,7 @@ extension NotchService {
         CommandBarService.shared.islandDidClose()
     }
 
-    /// Claude's question is as tall as its card, measured as it changes.
+    /// Claude's requests are as tall as their cards, measured as they change.
     func updateAgentRequestHeight(_ height: CGFloat) {
         guard height.isFinite, height > 0 else { return }
         let measured = ceil(height)

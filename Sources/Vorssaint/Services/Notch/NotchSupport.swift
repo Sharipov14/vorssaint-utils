@@ -2662,8 +2662,8 @@ struct NotchGeometry: Equatable {
         let height = safeContentTop + max(0, contentHeight) + NotchLayout.bottomInset
         return CGSize(width: notificationPreviewWidth, height: min(height, screen.height - 48))
     }
-    /// Claude's question opens as a card of its own, a little wider than the
-    /// island's pages and as tall as it is, so nothing scrolls.
+    /// Claude's requests open as cards of their own, a little wider than the
+    /// island's pages and as tall as they are, so nothing scrolls.
     func agentRequestSize(contentHeight: CGFloat) -> CGSize {
         let height = safeContentTop + max(0, contentHeight) + NotchLayout.bottomInset
         return CGSize(width: min(expandedWidth + 40, screen.width - 24), height: min(height, screen.height - 48))

@@ -228,7 +228,7 @@ final class AgentApprovalService: ObservableObject {
         }
         let room = listener != nil && pending.count < AgentApprovalSupport.pendingLimit
         if room {
-            // In first, so the island opens at the size a question takes.
+            // In first, so the island opens at the size the card takes.
             pending.append(approval)
             // Pinned, so the card waits for the click; unfocused, so typing goes on.
             island.open(.agents, pinned: true, takeFocus: false)
@@ -263,9 +263,6 @@ final class AgentApprovalService: ObservableObject {
             self?.answer(approval.id, allow: nil)
         }
     }
-
-    /// A question waits; the island shows it on its own.
-    var asking: Bool { pending.contains(where: \.isQuestion) }
 
     /// Claude's questions answered, a pick list each, the card saying so a moment.
     func answer(_ id: UUID, picks: [[String]]) {
@@ -320,7 +317,7 @@ final class AgentApprovalService: ObservableObject {
 
     /// The card goes; with the last one, the island goes back as it was.
     private func remove(_ id: UUID) {
-        guard let gone = pending.first(where: { $0.id == id }) else { return }
+        guard pending.contains(where: { $0.id == id }) else { return }
         pending.removeAll { $0.id == id }
         let island = NotchService.shared
         if pending.isEmpty {
@@ -328,8 +325,8 @@ final class AgentApprovalService: ObservableObject {
             opened = false
             pinned = false
         }
-        // The page behind a question comes back.
-        if gone.isQuestion, island.expanded { island.refreshPresentation() }
+        // The rest are as tall as they are, or the page behind them comes back.
+        if island.expanded { island.refreshPresentation() }
     }
 
     private static func send(_ allow: Bool?, rules: NSArray? = nil, asked: NSArray? = nil, answers: [String: Any]? = nil,
