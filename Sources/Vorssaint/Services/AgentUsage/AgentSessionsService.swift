@@ -137,11 +137,7 @@ final class AgentSessionsService: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async {
             if let tty, let script = AgentSessionsSupport.focusScript(bundleID: app.bundleIdentifier, tty: tty) {
                 AppleScriptRunner.run(script)
-            } else if let cwd, let bundleURL = app.bundleURL,
-                      let state = app.bundleIdentifier.flatMap({ AgentSessionsSupport.editorStateFolders[$0] }),
-                      let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first,
-                      let storage = try? Data(contentsOf: support.appending(path: state + "/User/globalStorage/storage.json")),
-                      let folder = AgentSessionsSupport.editorFolder(storage: storage, cwd: cwd) {
+            } else if let cwd, let bundleURL = app.bundleURL, let folder = editorFolder(of: app, cwd: cwd) {
                 DispatchQueue.main.async {
                     ActivationHandoff.yield(to: app)
                     NSWorkspace.shared.open([folder], withApplicationAt: bundleURL, configuration: NSWorkspace.OpenConfiguration())
@@ -150,6 +146,36 @@ final class AgentSessionsService: ObservableObject {
             }
             DispatchQueue.main.async { activate(app) }
         }
+    }
+
+    /// The folder of the editor window that holds `cwd`; nil for an app that
+    /// is no editor, or where no window has it.
+    static func editorFolder(of app: NSRunningApplication, cwd: String) -> URL? {
+        guard let state = app.bundleIdentifier.flatMap({ AgentSessionsSupport.editorStateFolders[$0] }),
+              let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first,
+              let storage = try? Data(contentsOf: support.appending(path: state + "/User/globalStorage/storage.json"))
+        else { return nil }
+        return AgentSessionsSupport.editorFolder(storage: storage, cwd: cwd)
+    }
+
+    /// The session's own window is the one in front: its terminal app, as
+    /// NotchBuddy reads it, or the editor window of its folder, by the title
+    /// Accessibility reads. An editor window that cannot be read is elsewhere.
+    static func inFront(_ session: AgentSession) -> Bool {
+        guard let host = session.host, let front = NSWorkspace.shared.frontmostApplication,
+              front.processIdentifier == host.pid else { return false }
+        guard front.bundleIdentifier.flatMap({ AgentSessionsSupport.editorStateFolders[$0] }) != nil else { return true }
+        guard AXIsProcessTrusted(), let cwd = session.cwd else { return false }
+        let app = AXUIElementCreateApplication(host.pid)
+        // A hung editor must not hold the island for the default six seconds.
+        AXUIElementSetMessagingTimeout(app, 0.35)
+        var window: CFTypeRef?, title: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &window) == .success,
+              let window, CFGetTypeID(window) == AXUIElementGetTypeID(),
+              AXUIElementCopyAttributeValue(window as! AXUIElement, kAXTitleAttribute as CFString, &title) == .success,
+              let title = title as? String else { return false }
+        let folder = editorFolder(of: front, cwd: cwd) ?? URL(fileURLWithPath: cwd)
+        return AgentSessionsSupport.title(title, names: folder.lastPathComponent)
     }
 
     /// The terminal of the process or, as a hook can run in a session of its

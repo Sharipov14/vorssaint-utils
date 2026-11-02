@@ -408,6 +408,13 @@ enum AgentSessionsSupport {
             .max { $0.standardizedFileURL.path.count < $1.standardizedFileURL.path.count }
     }
 
+    /// An editor's window title names its folder as one of its parts, as
+    /// VS Code's "● main.swift — project" does.
+    static func title(_ title: String, names folder: String) -> Bool {
+        !folder.isEmpty && title.components(separatedBy: " — ").flatMap { $0.components(separatedBy: " - ") }
+            .contains { $0.trimmingCharacters(in: .whitespaces) == folder }
+    }
+
     /// A script that puts the Terminal or iTerm2 tab on `tty` (`ttys003`) in
     /// front of its window and the window in front of the app's; nil for any
     /// other app, which can only be brought forward whole.

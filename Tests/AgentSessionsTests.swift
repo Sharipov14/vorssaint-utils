@@ -122,6 +122,12 @@ enum AgentSessionsTests {
         suite.expect(folder("/Users/x/My application") == nil && folder("/Users/x/api") == nil
                         && AgentSessionsSupport.editorFolder(storage: Data("{}".utf8), cwd: "/Users/x/My app") == nil,
                      "a folder no local window has opens nothing")
+        suite.expect(AgentSessionsSupport.title("● main.swift — vorssaint-utils", names: "vorssaint-utils")
+                        && AgentSessionsSupport.title("vorssaint-utils - Visual Studio Code", names: "vorssaint-utils")
+                        && !AgentSessionsSupport.title("● main.swift — vorssaint-utils", names: "utils")
+                        && !AgentSessionsSupport.title("main.swift — coucou", names: "vorssaint-utils")
+                        && !AgentSessionsSupport.title("main.swift", names: ""),
+                     "an editor window is the session's when its title names the session's folder, whole")
     }
 
     private static func tree(_ suite: TestSuite) {

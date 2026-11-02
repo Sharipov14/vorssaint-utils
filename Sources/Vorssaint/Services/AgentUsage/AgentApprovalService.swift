@@ -277,7 +277,7 @@ final class AgentApprovalService: ObservableObject {
     // MARK: Finished turns
 
     /// A turn Claude or Codex finished, told on a card a moment, its last reply
-    /// and all. `notice` tells it instead where the session's own app is in
+    /// and all. `notice` tells it instead where the session's own window is in
     /// front, where the reply cannot be read, or where the island cannot show
     /// it: away, or open on something else, which it does not take over.
     func finish(_ provider: AgentProvider, log: String, project: String, notice: @escaping () -> Void) {
@@ -297,9 +297,8 @@ final class AgentApprovalService: ObservableObject {
             }
             defer { sessions.pageDidDisappear() }
             let session = sessions.sessions.first { $0.log == log }
-            let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
             let island = NotchService.shared
-            guard let self, session?.host.map({ $0.pid != front }) ?? true, !island.expanded || island.showsAgentRequests,
+            guard let self, !(session.map(AgentSessionsService.inFront) ?? false), !island.expanded || island.showsAgentRequests,
                   let reply = Self.tail(of: log).flatMap({ AgentApprovalSupport.reply(inTail: $0, provider: provider) }) else {
                 return notice()
             }
