@@ -4,6 +4,7 @@
 import AppKit
 import Darwin
 import Foundation
+import SQLite3
 
 /// The agents running on this Mac now, for the AI page's Sessions card. It
 /// scans only while that card or the full list is on screen, and nothing
@@ -17,12 +18,15 @@ final class AgentSessionsService: ObservableObject {
     @Published private(set) var loaded = false
 
     private static let tick: TimeInterval = 2
+    private static let searchAgain: TimeInterval = 5
     /// `lsof` is the dear part of a scan, so its answer is kept between ticks.
     private static let portsTick: TimeInterval = 10
     private static let lsof = ("/usr/sbin/lsof", ["-nP", "+c0", "-iTCP", "-sTCP:LISTEN", "-F", "pcnPT"])
 
     private let queue = DispatchQueue(label: "com.vorssaint.agent-sessions", qos: .utility)
-    private let claudeDirectory = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".claude")
+    private let home = FileManager.default.homeDirectoryForCurrentUser
+    private var claudeDirectory: URL { home.appending(path: ".claude") }
+    private var openCodeDatabase: String { home.appending(path: ".local/share/opencode/opencode.db").path }
     // Main thread.
     private var timer: DispatchSourceTimer?
     /// Views showing the sessions. A page that disappears late must not stop
@@ -35,8 +39,16 @@ final class AgentSessionsService: ObservableObject {
     private var listenersRead = Date.distantPast
     private var tracked: [Int32: AgentOrphan] = [:]
     private var hosts: [Int32: (identity: UInt64, host: AgentHost?)] = [:]
-    /// Where a session keeps its subagents; nil, with the time of the search, while it has none.
-    private var subagentFolders: [String: (folder: URL?, searched: Date)] = [:]
+    /// The project folder of a Claude session's transcript; nil, with the
+    /// time of the search, until Claude writes it.
+    private var projectFolders: [String: (folder: URL?, searched: Date)] = [:]
+    /// How far each log a session writes has been read, and what it said.
+    private var activityLogs: [String: AgentActivityLog] = [:]
+    /// The first line of each Codex and Copilot log looked at; nil for one that
+    /// belongs to no session of the person's.
+    private var heads: [String: AgentLogCandidate?] = [:]
+    /// The Codex logs named by a `codex resume <id>`, found once.
+    private var resumed: [String: String?] = [:]
 
     private init() {}
 
@@ -52,7 +64,10 @@ final class AgentSessionsService: ObservableObject {
             listenersRead = .distantPast
             tracked = [:]
             hosts = [:]
-            subagentFolders = [:]
+            projectFolders = [:]
+            activityLogs = [:]
+            heads = [:]
+            resumed = [:]
         }
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: Self.tick, leeway: .milliseconds(500))
@@ -158,9 +173,11 @@ final class AgentSessionsService: ObservableObject {
             tracked = tracked.filter { listening.contains($0.key) }
         }
 
-        let sessions = AgentSessionsSupport.sessions(
+        var sessions = AgentSessionsSupport.sessions(
             rows: rows, probes: probes, claudeFiles: files, subagents: subagents, listeners: listeners,
             hosts: hosts.compactMapValues { $0.host }, ignoring: ProcessInfo.processInfo.processIdentifier)
+        attachActivity(to: &sessions, args: Dictionary(rows.map { ($0.pid, $0.args) }, uniquingKeysWith: { first, _ in first }),
+                       files: files, now: now)
         tracked = AgentSessionsSupport.tracking(tracked, sessions: sessions, startedAt: KillProcessService.startTime(for:))
         // A pid reused by something else since is not what was remembered.
         let orphans = AgentSessionsSupport.orphans(tracked: tracked, sessions: sessions, listeners: listeners)
@@ -223,19 +240,24 @@ final class AgentSessionsService: ObservableObject {
         return AgentSessionsSupport.ports(from: PortManagerSupport.parseLsof(result.output))
     }
 
-    /// Claude keeps a session's subagents under `projects/<folder>/<id>/subagents`,
-    /// the folder named after the project; the id is unique, so it is searched for.
+    /// The folder Claude keeps a session's transcript in, named after the
+    /// project; the id is unique, so it is searched for. A session that has
+    /// not written yet is looked for again every few seconds.
+    private func projectFolder(of sessionId: String, now: Date) -> URL? {
+        let known = projectFolders[sessionId]
+        if known == nil || (known?.folder == nil && now.timeIntervalSince(known?.searched ?? now) >= Self.searchAgain) {
+            let projects = claudeDirectory.appending(path: "projects")
+            projectFolders[sessionId] = (((try? FileManager.default.contentsOfDirectory(atPath: projects.path)) ?? [])
+                .map { projects.appending(path: $0) }
+                .first { FileManager.default.fileExists(atPath: $0.appending(path: sessionId + ".jsonl").path) }, now)
+        }
+        return projectFolders[sessionId]?.folder
+    }
+
+    /// Claude keeps a session's subagents under `projects/<folder>/<id>/subagents`.
     private func workingSubagents(of sessionId: String, now: Date) -> [AgentSubagent] {
         let fileManager = FileManager.default
-        let known = subagentFolders[sessionId]
-        // A session with no subagents yet is looked for again only now and then.
-        if known == nil || (known?.folder == nil && now.timeIntervalSince(known?.searched ?? now) >= 30) {
-            let projects = claudeDirectory.appending(path: "projects")
-            subagentFolders[sessionId] = (((try? fileManager.contentsOfDirectory(atPath: projects.path)) ?? [])
-                .map { projects.appending(path: "\($0)/\(sessionId)/subagents") }
-                .first { fileManager.fileExists(atPath: $0.path) }, now)
-        }
-        guard let folder = subagentFolders[sessionId]?.folder else { return [] }
+        guard let folder = projectFolder(of: sessionId, now: now)?.appending(path: sessionId + "/subagents") else { return [] }
         let logs = (try? fileManager.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
         return logs.compactMap { log in
             guard log.pathExtension == "jsonl",
@@ -246,4 +268,236 @@ final class AgentSessionsService: ObservableObject {
                 .flatMap { AgentSessionsSupport.parseSubagent(meta: $0, id: name, lastActivity: written) }
         }
     }
+
+    // MARK: Activity
+
+    /// On `queue`. Finds the log each session writes and reads what was added to it.
+    private func attachActivity(to sessions: inout [AgentSession], args: [Int32: String],
+                                files: [Int32: AgentClaudeFile], now: Date) {
+        var logs: [Int32: String] = [:]
+        for (pid, file) in files {
+            if let folder = projectFolder(of: file.sessionId, now: now) {
+                logs[pid] = folder.appending(path: file.sessionId + ".jsonl").path
+            }
+        }
+        let requests = sessions.filter { !$0.isSubagent && [.codex, .copilot, .opencode].contains($0.kind) }.map { session in
+            let argv = (args[session.pid] ?? "").split(separator: " ").map(String.init)
+            return AgentLogRequest(pid: session.pid, kind: session.kind, cwd: session.cwd, started: session.started ?? now,
+                                   exact: Self.openFiles(of: session.pid).first { AgentActivitySupport.isLog($0, kind: session.kind) }
+                                       ?? namedLog(kind: session.kind, argv: argv))
+        }
+        let open = requests.filter { $0.exact == nil }
+        logs.merge(AgentActivitySupport.links(requests, candidates: open.isEmpty ? [] : candidates(for: open, now: now))) { $1 }
+
+        let written = Set(logs.values)
+        activityLogs = activityLogs.filter { written.contains($0.key) }
+        for index in sessions.indices {
+            guard let path = logs[sessions[index].pid], !sessions[index].isSubagent else { continue }
+            var log = activityLogs[path] ?? AgentActivityLog()
+            if sessions[index].kind == .opencode { readOpenCode(path, into: &log) } else { read(path, kind: sessions[index].kind, into: &log) }
+            activityLogs[path] = log
+            sessions[index].log = path
+            sessions[index].activity = log.activity
+        }
+    }
+
+    /// The log a process names in its arguments: a session it resumes.
+    private func namedLog(kind: AgentProcessKind, argv: [String]) -> String? {
+        switch kind {
+        case .codex:
+            guard let id = AgentActivitySupport.argument(after: ["resume"], in: argv) else { return nil }
+            if let known = resumed[id] { return known }
+            let found = FileManager.default.enumerator(atPath: home.appending(path: ".codex/sessions").path)?
+                .lazy.compactMap { $0 as? String }.first { $0.hasSuffix(id + ".jsonl") }
+                .map { home.appending(path: ".codex/sessions/" + $0).path }
+            resumed[id] = found
+            return found
+        case .copilot:
+            guard let id = AgentActivitySupport.argument(after: ["--resume"], in: argv) else { return nil }
+            let path = home.appending(path: ".copilot/session-state/\(id)/events.jsonl").path
+            return FileManager.default.fileExists(atPath: path) ? path : nil
+        case .opencode:
+            return AgentActivitySupport.argument(after: ["--session", "-s"], in: argv).map { openCodeDatabase + "#" + $0 }
+        default:
+            return nil
+        }
+    }
+
+    /// The logs begun since the oldest of these processes started.
+    private func candidates(for requests: [AgentLogRequest], now: Date) -> [AgentLogCandidate] {
+        guard let oldest = requests.map(\.started).min() else { return [] }
+        let since = oldest.addingTimeInterval(-AgentSessionsSupport.startTolerance)
+        let kinds = Set(requests.map(\.kind))
+        var result: [AgentLogCandidate] = []
+        if kinds.contains(.codex) {
+            // Codex files a log under the day it began.
+            let calendar = Calendar.current
+            var day = max(calendar.startOfDay(for: since), calendar.startOfDay(for: now.addingTimeInterval(-7 * 86_400)))
+            var folders: [URL] = []
+            while day <= now {
+                let parts = calendar.dateComponents([.year, .month, .day], from: day)
+                folders.append(home.appending(path: String(format: ".codex/sessions/%04d/%02d/%02d",
+                                                           parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)))
+                day = calendar.date(byAdding: .day, value: 1, to: day) ?? now.addingTimeInterval(1)
+            }
+            result += folders.flatMap { logs(in: $0, since: since, kind: .codex) { $0.hasPrefix("rollout-") && $0.hasSuffix(".jsonl") } }
+        }
+        if kinds.contains(.copilot) {
+            let state = home.appending(path: ".copilot/session-state")
+            let folders = ((try? FileManager.default.contentsOfDirectory(atPath: state.path)) ?? []).map { state.appending(path: $0) }
+            result += folders.flatMap { logs(in: $0, since: since, kind: .copilot) { $0 == "events.jsonl" } }
+        }
+        if kinds.contains(.opencode) {
+            Self.query(openCodeDatabase, """
+                SELECT id, directory, time_created, time_updated FROM session
+                WHERE parent_id IS NULL AND time_updated >= ?1
+                """, [Int64(since.timeIntervalSince1970 * 1000)]) { row in
+                guard let id = Self.text(row, 0), let cwd = Self.text(row, 1) else { return }
+                result.append(AgentLogCandidate(path: openCodeDatabase + "#" + id, kind: .opencode, cwd: cwd,
+                                                created: Date(timeIntervalSince1970: Double(sqlite3_column_int64(row, 2)) / 1000),
+                                                modified: Date(timeIntervalSince1970: Double(sqlite3_column_int64(row, 3)) / 1000)))
+            }
+        }
+        return result
+    }
+
+    /// The logs in a folder changed since `since`, as their first lines describe them.
+    private func logs(in folder: URL, since: Date, kind: AgentProcessKind,
+                      named: (String) -> Bool) -> [AgentLogCandidate] {
+        let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+        return files.compactMap { file in
+            guard named(file.lastPathComponent),
+                  let modified = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+                  modified >= since else { return nil }
+            if heads[file.path] == nil {
+                let head = Self.firstLine(file.path).flatMap(AgentLogParser.object)
+                heads[file.path] = head.flatMap { head in
+                    kind == .codex ? AgentActivitySupport.codexCandidate(head: head, path: file.path, modified: modified)
+                        : AgentActivitySupport.copilotCandidate(head: head, path: file.path, modified: modified)
+                }
+            }
+            return heads[file.path]?.map {
+                AgentLogCandidate(path: $0.path, kind: $0.kind, cwd: $0.cwd, created: $0.created, modified: modified)
+            }
+        }
+    }
+
+    /// Reads what was added to a JSON-lines log since the last tick; at first
+    /// only its end, which holds the turn running now.
+    private func read(_ path: String, kind: AgentProcessKind, into log: inout AgentActivityLog) {
+        guard let handle = FileHandle(forReadingAtPath: path) else { return }
+        defer { try? handle.close() }
+        guard let size = try? handle.seekToEnd() else { return }
+        if log.offset < 0 || UInt64(log.offset) > size {
+            log = AgentActivityLog()
+            log.offset = Int64(size) - Int64(min(UInt64(AgentActivitySupport.firstRead), size))
+            log.midLine = log.offset > 0
+        }
+        guard UInt64(log.offset) < size, (try? handle.seek(toOffset: UInt64(log.offset))) != nil,
+              let data = try? handle.read(upToCount: AgentActivitySupport.tickRead), !data.isEmpty else { return }
+        let (lines, consumed) = AgentActivitySupport.lines(data, partialStart: log.midLine)
+        guard consumed > 0 else {
+            // A line longer than a tick's read is skipped rather than read forever.
+            if data.count >= AgentActivitySupport.tickRead {
+                log.offset += Int64(data.count)
+                log.midLine = true
+            }
+            return
+        }
+        log.offset += Int64(consumed)
+        log.midLine = false
+        for line in lines {
+            guard let object = AgentLogParser.object(line) else { continue }
+            switch kind {
+            case .claude: AgentActivitySupport.applyClaude(object, to: &log.activity)
+            case .codex: AgentActivitySupport.applyCodex(object, to: &log.activity)
+            case .copilot: AgentActivitySupport.applyCopilot(object, to: &log.activity)
+            default: break
+            }
+        }
+    }
+
+    /// Reads the parts an OpenCode session added or changed since the last
+    /// tick; at first only its latest.
+    private func readOpenCode(_ path: String, into log: inout AgentActivityLog) {
+        guard let mark = path.lastIndex(of: "#") else { return }
+        let database = String(path[..<mark]), session = String(path[path.index(after: mark)...])
+        let first = log.offset < 0
+        var rows: [(id: String, updated: Int64, role: String?, part: [String: Any])] = []
+        Self.query(database, """
+            SELECT p.id, p.time_updated, json_extract(m.data, '$.role'), p.data FROM part p
+            JOIN message m ON m.id = p.message_id WHERE p.session_id = ?1 AND p.time_updated > ?2
+            ORDER BY p.time_updated \(first ? "DESC" : "ASC") LIMIT \(first ? 200 : 500)
+            """, [session, max(log.offset, 0)]) { row in
+            guard let id = Self.text(row, 0), let part = Self.text(row, 3).flatMap({ AgentLogParser.object(Data($0.utf8)) })
+            else { return }
+            rows.append((id, sqlite3_column_int64(row, 1), Self.text(row, 2), part))
+        }
+        if first { rows.reverse() }
+        log.offset = max(log.offset, rows.last?.updated ?? 0)
+        for row in rows { AgentActivitySupport.applyOpenCode(part: row.part, id: row.id, role: row.role, to: &log.activity) }
+    }
+
+    private static func firstLine(_ path: String) -> Data? {
+        guard let handle = FileHandle(forReadingAtPath: path) else { return nil }
+        defer { try? handle.close() }
+        // Codex's first line carries its instructions, so it can be long.
+        guard let data = try? handle.read(upToCount: 512 * 1024), let end = data.firstIndex(of: UInt8(ascii: "\n"))
+        else { return nil }
+        return data[data.startIndex..<end]
+    }
+
+    /// The files a process holds open, by path.
+    private static func openFiles(of pid: pid_t) -> [String] {
+        let bytes = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nil, 0)
+        guard bytes > 0 else { return [] }
+        let stride = MemoryLayout<proc_fdinfo>.stride
+        var fds = [proc_fdinfo](repeating: proc_fdinfo(), count: Int(bytes) / stride)
+        let filled = fds.withUnsafeMutableBytes { proc_pidinfo(pid, PROC_PIDLISTFDS, 0, $0.baseAddress, Int32($0.count)) }
+        guard filled > 0 else { return [] }
+        return fds.prefix(Int(filled) / stride).compactMap { fd in
+            guard fd.proc_fdtype == UInt32(PROX_FDTYPE_VNODE) else { return nil }
+            var info = vnode_fdinfowithpath()
+            let size = Int32(MemoryLayout<vnode_fdinfowithpath>.size)
+            guard proc_pidfdinfo(pid, fd.proc_fd, PROC_PIDFDVNODEPATHINFO, &info, size) == size else { return nil }
+            let path = withUnsafePointer(to: &info.pvip.vip_path) {
+                $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXPATHLEN)) { String(cString: $0) }
+            }
+            return path.isEmpty ? nil : path
+        }
+    }
+
+    /// Runs a read-only query; a database that is missing or busy gives no rows.
+    private static func query(_ path: String, _ sql: String, _ values: [Any], row: (OpaquePointer) -> Void) {
+        guard FileManager.default.fileExists(atPath: path) else { return }
+        var db: OpaquePointer?
+        defer { sqlite3_close(db) }
+        guard sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nil) == SQLITE_OK else { return }
+        sqlite3_busy_timeout(db, 200)
+        var statement: OpaquePointer?
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else { return }
+        for (index, value) in values.enumerated() {
+            let position = Int32(index + 1)
+            if let number = value as? Int64 {
+                sqlite3_bind_int64(statement, position, number)
+            } else if let text = value as? String {
+                sqlite3_bind_text(statement, position, text, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+            }
+        }
+        while sqlite3_step(statement) == SQLITE_ROW { row(statement) }
+    }
+
+    private static func text(_ statement: OpaquePointer, _ column: Int32) -> String? {
+        sqlite3_column_text(statement, column).map { String(cString: $0) }
+    }
+}
+
+/// How far a session's log has been read, and what it said.
+struct AgentActivityLog {
+    /// Bytes read, or for OpenCode the newest part's update time; -1 before the first read.
+    var offset: Int64 = -1
+    /// The read stopped inside a line, whose rest is skipped.
+    var midLine = false
+    var activity = AgentActivity()
 }

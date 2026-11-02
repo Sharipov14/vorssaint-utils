@@ -62,6 +62,10 @@ struct AgentClaudeFile: Equatable {
     /// Busy or idle; nil when the file says neither.
     let working: Bool?
     let name: String?
+    /// Waiting on the person: a permission, a question, a dialog.
+    var asking = false
+    /// What it waits for, in Claude's own words.
+    var waitingFor: String?
 }
 
 /// A Claude subagent that runs inside its parent's process.
@@ -78,7 +82,8 @@ struct AgentPort: Hashable {
 }
 
 struct AgentSession: Identifiable, Equatable {
-    enum Status { case working, waiting }
+    /// `waiting` is idle; `asking` waits on the person.
+    enum Status { case working, waiting, asking }
 
     let id: String
     let kind: AgentProcessKind
@@ -93,6 +98,10 @@ struct AgentSession: Identifiable, Equatable {
     var memory: Int64 = 0
     var ports: [AgentPort] = []
     var host: AgentHost?
+    var waitingFor: String?
+    /// The log it writes, named as the usage reader names its turns.
+    var log: String?
+    var activity: AgentActivity?
 
     var isSubagent: Bool { pid == 0 }
     /// No regular app owns it: a daemon, a login item, a detached shell.
@@ -219,6 +228,7 @@ enum AgentSessionsSupport {
         let startedAt: Double
         let status: String?
         let name: String?
+        let waitingFor: String?
     }
 
     private struct SubagentMetaJSON: Decodable {
@@ -231,7 +241,9 @@ enum AgentSessionsSupport {
         return AgentClaudeFile(pid: file.pid, sessionId: file.sessionId, cwd: file.cwd,
                                startedAt: Date(timeIntervalSince1970: file.startedAt / 1000),
                                working: file.status == "busy" ? true : file.status == "idle" ? false : nil,
-                               name: file.name?.isEmpty == false ? file.name : nil)
+                               name: file.name?.isEmpty == false ? file.name : nil,
+                               asking: file.status == "waiting",
+                               waitingFor: file.waitingFor?.isEmpty == false ? file.waitingFor : nil)
     }
 
     static func parseSubagent(meta data: Data, id: String, lastActivity: Date) -> AgentSubagent? {
@@ -307,10 +319,10 @@ enum AgentSessionsSupport {
                 .reduce(row.cpu) { $0 + (byPID[$1]?.cpu ?? 0) }
             return AgentSession(id: "\(pid)-\(probe.startedAt)", kind: probe.kind, pid: pid, identity: probe.startedAt, depth: depth,
                                 cwd: file?.cwd ?? probe.cwd, title: file?.name,
-                                status: (file?.working ?? (cpu >= workingCPU)) ? .working : .waiting,
+                                status: file?.asking == true ? .asking : (file?.working ?? (cpu >= workingCPU)) ? .working : .waiting,
                                 memory: Int64(row.rssKB + (launcherMemory[pid] ?? 0)) * 1024,
                                 ports: Array(Set(ports[pid] ?? [])).sorted { ($0.port, $0.pid) < ($1.port, $1.pid) },
-                                host: hosts[pid])
+                                host: hosts[pid], waitingFor: file?.waitingFor)
         }
 
         let children = Dictionary(grouping: agents.filter { parent[$0] != nil }, by: { parent[$0]! })
@@ -356,10 +368,11 @@ enum AgentSessionsSupport {
         let terminal = AgentHost(pid: 0, name: "Terminal")
         return [
             AgentSession(id: "1", kind: .claude, pid: 1, identity: start(14), cwd: "/Users/you/web-app", status: .working,
-                         memory: 410 << 20, ports: [AgentPort(port: 3000, pid: 2, name: "node")], host: terminal),
+                         memory: 410 << 20, ports: [AgentPort(port: 3000, pid: 2, name: "node")], host: terminal,
+                         activity: AgentActivity(state: .running, step: AgentStep(verb: .edit, target: "App.swift"))),
             AgentSession(id: "1.a", kind: .claude, pid: 0, identity: 0, depth: 1, title: "Explore", status: .working),
             AgentSession(id: "3", kind: .codex, pid: 3, identity: start(52), cwd: "/Users/you/api", status: .waiting,
-                         memory: 230 << 20, host: terminal),
+                         memory: 230 << 20, host: terminal, activity: AgentActivity(state: .finished)),
             AgentSession(id: "4", kind: .hermes, pid: 4, identity: start(600), cwd: "/Users/you/.hermes", status: .waiting,
                          memory: 120 << 20),
         ]

@@ -110,6 +110,17 @@ struct NotchAgentStrings {
     let orphansHint: String
     let closeAll: String
     let endSessionFormat: String
+    let thinking: String
+    let done: String
+    let turnFailed: String
+    let asking: String
+    let stepRun: String
+    let stepRead: String
+    let stepEdit: String
+    let stepSearch: String
+    let stepWeb: String
+    let stepPlan: String
+    let stepDelegate: String
 
     func tokens(_ count: String) -> String { String(format: tokensFormat, count) }
     func cached(_ share: String) -> String { String(format: cachedFormat, share) }
@@ -125,6 +136,36 @@ struct NotchAgentStrings {
     func pricesFrom(_ day: String) -> String { String(format: pricesFromFormat, day) }
     func resetsExpiry(_ when: String) -> String { String(format: resetsExpiryFormat, when) }
     func endSession(_ name: String) -> String { String(format: endSessionFormat, name) }
+
+    /// The line under a session saying what it does now; nil while its log is unknown.
+    func activity(of session: AgentSession) -> String? {
+        if session.status == .asking { return asking }
+        guard let activity = session.activity, let state = activity.state else { return nil }
+        // Claude's own file says when it went idle, which a log cut short may not.
+        if activity.inTurn && session.kind == .claude && session.status == .waiting { return done }
+        switch state {
+        case .thinking: return thinking
+        case .running:
+            guard let step = activity.step else { return thinking }
+            return [self.step(step.verb), step.target].filter { !$0.isEmpty }.joined(separator: " · ")
+        case .finished: return activity.reply.map { done + " · " + $0 } ?? done
+        case .failed: return turnFailed
+        }
+    }
+
+    /// What a step does; a tool with no verb of its own goes by its name.
+    func step(_ verb: AgentToolVerb) -> String {
+        switch verb {
+        case .run: return stepRun
+        case .read: return stepRead
+        case .edit: return stepEdit
+        case .search: return stepSearch
+        case .web: return stepWeb
+        case .plan: return stepPlan
+        case .delegate: return stepDelegate
+        case .other(let name): return name
+        }
+    }
 
     /// Why Claude Code could not check the account's limits.
     func claudeCode(_ failure: AgentClaudeServer.Failure) -> String {
@@ -303,7 +344,18 @@ extension NotchAgentStrings {
         orphanedPorts: "Orphaned ports",
         orphansHint: "Left listening after their session ended",
         closeAll: "Close all",
-        endSessionFormat: "End session %@")
+        endSessionFormat: "End session %@",
+        thinking: "Thinking",
+        done: "Done",
+        turnFailed: "Failed",
+        asking: "Needs you",
+        stepRun: "Runs",
+        stepRead: "Reads",
+        stepEdit: "Edits",
+        stepSearch: "Searches",
+        stepWeb: "Searches the web",
+        stepPlan: "Plans",
+        stepDelegate: "Delegates")
 
     static let uk = NotchAgentStrings(
         title: "ШІ-агенти",
@@ -411,7 +463,18 @@ extension NotchAgentStrings {
         orphanedPorts: "Осиротілі порти",
         orphansHint: "Залишились відкритими після завершення сесії",
         closeAll: "Закрити всі",
-        endSessionFormat: "Завершити сесію %@")
+        endSessionFormat: "Завершити сесію %@",
+        thinking: "Думає",
+        done: "Готово",
+        turnFailed: "Помилка",
+        asking: "Чекає на вас",
+        stepRun: "Запускає",
+        stepRead: "Читає",
+        stepEdit: "Редагує",
+        stepSearch: "Шукає",
+        stepWeb: "Шукає в мережі",
+        stepPlan: "Планує",
+        stepDelegate: "Доручає")
 
     static let ptBR = NotchAgentStrings(
         title: "Agentes de IA",
@@ -519,7 +582,18 @@ extension NotchAgentStrings {
         orphanedPorts: "Portas órfãs",
         orphansHint: "Continuam abertas após o fim da sessão",
         closeAll: "Fechar todas",
-        endSessionFormat: "Encerrar sessão %@")
+        endSessionFormat: "Encerrar sessão %@",
+        thinking: "Pensando",
+        done: "Pronto",
+        turnFailed: "Falhou",
+        asking: "Precisa de você",
+        stepRun: "Executa",
+        stepRead: "Lê",
+        stepEdit: "Edita",
+        stepSearch: "Pesquisa",
+        stepWeb: "Pesquisa na web",
+        stepPlan: "Planeja",
+        stepDelegate: "Delega")
 
     static let es = NotchAgentStrings(
         title: "Agentes de IA",
@@ -627,7 +701,18 @@ extension NotchAgentStrings {
         orphanedPorts: "Puertos huérfanos",
         orphansHint: "Siguen abiertos tras terminar su sesión",
         closeAll: "Cerrar todos",
-        endSessionFormat: "Terminar sesión %@")
+        endSessionFormat: "Terminar sesión %@",
+        thinking: "Pensando",
+        done: "Listo",
+        turnFailed: "Error",
+        asking: "Te necesita",
+        stepRun: "Ejecuta",
+        stepRead: "Lee",
+        stepEdit: "Edita",
+        stepSearch: "Busca",
+        stepWeb: "Busca en la web",
+        stepPlan: "Planifica",
+        stepDelegate: "Delega")
 
     static let sk = NotchAgentStrings(
         title: "AI agenti",
@@ -735,7 +820,18 @@ extension NotchAgentStrings {
         orphanedPorts: "Osirelé porty",
         orphansHint: "Zostali otvorené po skončení relácie",
         closeAll: "Zavrieť všetky",
-        endSessionFormat: "Ukončiť reláciu %@")
+        endSessionFormat: "Ukončiť reláciu %@",
+        thinking: "Premýšľa",
+        done: "Hotovo",
+        turnFailed: "Chyba",
+        asking: "Čaká na vás",
+        stepRun: "Spúšťa",
+        stepRead: "Číta",
+        stepEdit: "Upravuje",
+        stepSearch: "Hľadá",
+        stepWeb: "Hľadá na webe",
+        stepPlan: "Plánuje",
+        stepDelegate: "Deleguje")
 
     static let de = NotchAgentStrings(
         title: "KI-Agenten",
@@ -843,7 +939,18 @@ extension NotchAgentStrings {
         orphanedPorts: "Verwaiste Ports",
         orphansHint: "Nach dem Ende ihrer Sitzung noch offen",
         closeAll: "Alle schließen",
-        endSessionFormat: "Sitzung %@ beenden")
+        endSessionFormat: "Sitzung %@ beenden",
+        thinking: "Denkt nach",
+        done: "Fertig",
+        turnFailed: "Fehler",
+        asking: "Wartet auf dich",
+        stepRun: "Führt aus",
+        stepRead: "Liest",
+        stepEdit: "Bearbeitet",
+        stepSearch: "Sucht",
+        stepWeb: "Sucht im Web",
+        stepPlan: "Plant",
+        stepDelegate: "Delegiert")
 
     static let fr = NotchAgentStrings(
         title: "Agents IA",
@@ -951,7 +1058,18 @@ extension NotchAgentStrings {
         orphanedPorts: "Ports orphelins",
         orphansHint: "Toujours ouverts après la fin de leur session",
         closeAll: "Tout fermer",
-        endSessionFormat: "Terminer la session %@")
+        endSessionFormat: "Terminer la session %@",
+        thinking: "Réfléchit",
+        done: "Terminé",
+        turnFailed: "Échec",
+        asking: "Vous attend",
+        stepRun: "Exécute",
+        stepRead: "Lit",
+        stepEdit: "Modifie",
+        stepSearch: "Cherche",
+        stepWeb: "Cherche sur le web",
+        stepPlan: "Planifie",
+        stepDelegate: "Délègue")
 
     static let it = NotchAgentStrings(
         title: "Agenti IA",
@@ -1059,7 +1177,18 @@ extension NotchAgentStrings {
         orphanedPorts: "Porte orfane",
         orphansHint: "Ancora aperte dopo la fine della sessione",
         closeAll: "Chiudi tutte",
-        endSessionFormat: "Termina sessione %@")
+        endSessionFormat: "Termina sessione %@",
+        thinking: "Sta pensando",
+        done: "Fatto",
+        turnFailed: "Errore",
+        asking: "Ti aspetta",
+        stepRun: "Esegue",
+        stepRead: "Legge",
+        stepEdit: "Modifica",
+        stepSearch: "Cerca",
+        stepWeb: "Cerca sul web",
+        stepPlan: "Pianifica",
+        stepDelegate: "Delega")
 
     static let ru = NotchAgentStrings(
         title: "ИИ-агенты",
@@ -1167,7 +1296,18 @@ extension NotchAgentStrings {
         orphanedPorts: "Осиротевшие порты",
         orphansHint: "Остались открытыми после завершения сессии",
         closeAll: "Закрыть все",
-        endSessionFormat: "Завершить сессию %@")
+        endSessionFormat: "Завершить сессию %@",
+        thinking: "Думает",
+        done: "Готово",
+        turnFailed: "Ошибка",
+        asking: "Ждёт вас",
+        stepRun: "Запускает",
+        stepRead: "Читает",
+        stepEdit: "Правит",
+        stepSearch: "Ищет",
+        stepWeb: "Ищет в сети",
+        stepPlan: "Планирует",
+        stepDelegate: "Поручает")
 
     static let tr = NotchAgentStrings(
         title: "YZ Ajanları",
@@ -1275,7 +1415,18 @@ extension NotchAgentStrings {
         orphanedPorts: "Sahipsiz bağlantı noktaları",
         orphansHint: "Oturumları bittikten sonra açık kaldı",
         closeAll: "Tümünü kapat",
-        endSessionFormat: "%@ oturumunu sonlandır")
+        endSessionFormat: "%@ oturumunu sonlandır",
+        thinking: "Düşünüyor",
+        done: "Bitti",
+        turnFailed: "Hata",
+        asking: "Sizi bekliyor",
+        stepRun: "Çalıştırıyor",
+        stepRead: "Okuyor",
+        stepEdit: "Düzenliyor",
+        stepSearch: "Arıyor",
+        stepWeb: "Web’de arıyor",
+        stepPlan: "Planlıyor",
+        stepDelegate: "Görev veriyor")
 
     static let ja = NotchAgentStrings(
         title: "AIエージェント",
@@ -1383,7 +1534,18 @@ extension NotchAgentStrings {
         orphanedPorts: "孤立したポート",
         orphansHint: "セッション終了後も開いたままです",
         closeAll: "すべて閉じる",
-        endSessionFormat: "セッション %@ を終了")
+        endSessionFormat: "セッション %@ を終了",
+        thinking: "考え中",
+        done: "完了",
+        turnFailed: "エラー",
+        asking: "入力待ち",
+        stepRun: "実行",
+        stepRead: "読み取り",
+        stepEdit: "編集",
+        stepSearch: "検索",
+        stepWeb: "Web 検索",
+        stepPlan: "計画",
+        stepDelegate: "委任")
 
     static let ko = NotchAgentStrings(
         title: "AI 에이전트",
@@ -1491,7 +1653,18 @@ extension NotchAgentStrings {
         orphanedPorts: "고아 포트",
         orphansHint: "세션이 끝난 후에도 열려 있음",
         closeAll: "모두 닫기",
-        endSessionFormat: "%@ 세션 종료")
+        endSessionFormat: "%@ 세션 종료",
+        thinking: "생각 중",
+        done: "완료",
+        turnFailed: "오류",
+        asking: "입력 대기",
+        stepRun: "실행",
+        stepRead: "읽기",
+        stepEdit: "편집",
+        stepSearch: "검색",
+        stepWeb: "웹 검색",
+        stepPlan: "계획",
+        stepDelegate: "위임")
 
     static let zhHans = NotchAgentStrings(
         title: "AI 智能体",
@@ -1599,7 +1772,18 @@ extension NotchAgentStrings {
         orphanedPorts: "孤立端口",
         orphansHint: "会话结束后仍在监听",
         closeAll: "全部关闭",
-        endSessionFormat: "结束会话 %@")
+        endSessionFormat: "结束会话 %@",
+        thinking: "思考中",
+        done: "完成",
+        turnFailed: "出错",
+        asking: "等你处理",
+        stepRun: "运行",
+        stepRead: "读取",
+        stepEdit: "编辑",
+        stepSearch: "搜索",
+        stepWeb: "网络搜索",
+        stepPlan: "规划",
+        stepDelegate: "委派")
 
     static let zhTW = NotchAgentStrings(
         title: "AI 代理",
@@ -1707,7 +1891,18 @@ extension NotchAgentStrings {
         orphanedPorts: "孤立連接埠",
         orphansHint: "工作階段結束後仍在監聽",
         closeAll: "全部關閉",
-        endSessionFormat: "結束工作階段 %@")
+        endSessionFormat: "結束工作階段 %@",
+        thinking: "思考中",
+        done: "完成",
+        turnFailed: "錯誤",
+        asking: "等你處理",
+        stepRun: "執行",
+        stepRead: "讀取",
+        stepEdit: "編輯",
+        stepSearch: "搜尋",
+        stepWeb: "網路搜尋",
+        stepPlan: "規劃",
+        stepDelegate: "委派")
 
     static let zhHK = NotchAgentStrings(
         title: "AI 代理",
@@ -1815,5 +2010,16 @@ extension NotchAgentStrings {
         orphanedPorts: "孤立連接埠",
         orphansHint: "工作階段結束後仍在監聽",
         closeAll: "全部關閉",
-        endSessionFormat: "結束工作階段 %@")
+        endSessionFormat: "結束工作階段 %@",
+        thinking: "思考中",
+        done: "完成",
+        turnFailed: "錯誤",
+        asking: "等你處理",
+        stepRun: "執行",
+        stepRead: "讀取",
+        stepEdit: "編輯",
+        stepSearch: "搜尋",
+        stepWeb: "網上搜尋",
+        stepPlan: "規劃",
+        stepDelegate: "委派")
 }

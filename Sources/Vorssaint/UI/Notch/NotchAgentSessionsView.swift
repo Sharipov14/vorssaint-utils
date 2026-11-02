@@ -35,6 +35,8 @@ struct NotchAgentSessionsList: View {
         let sessions = preview ? AgentSessionsSupport.sample(now: Date())
             : AgentSessionsSupport.shown(service.sessions, providers: providers)
         let orphans = preview ? [] : service.orphans
+        // The usage reader names a turn after its log, as the sessions do.
+        let turns = Dictionary(usage.snapshot.live.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         Group {
             if !preview && !service.loaded {
                 ProgressView().controlSize(.small).frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -50,7 +52,7 @@ struct NotchAgentSessionsList: View {
                         if !sessions.isEmpty {
                             NotchAgentCardChrome {
                                 TimelineView(.periodic(from: .now, by: 1)) { context in
-                                    NotchAgentSessionRows(sessions: sessions, now: context.date, text: text,
+                                    NotchAgentSessionRows(sessions: sessions, turns: turns, now: context.date, text: text,
                                                           preview: preview, selected: $selected)
                                 }
                             }
@@ -126,6 +128,8 @@ struct NotchAgentSessionsList: View {
 /// Sessions one under another, a tapped one offering to end it.
 private struct NotchAgentSessionRows: View {
     let sessions: [AgentSession]
+    /// The usage turn each log is having, for its model and cost.
+    let turns: [String: AgentLiveSession]
     let now: Date
     let text: NotchAgentStrings
     let preview: Bool
@@ -143,7 +147,8 @@ private struct NotchAgentSessionRows: View {
         let canEnd = canEnd
         VStack(alignment: .leading, spacing: 3) {
             ForEach(sessions) { session in
-                NotchAgentSessionRow(session: session, now: now, text: text, preview: preview,
+                NotchAgentSessionRow(session: session, turn: session.log.flatMap { turns[$0] }, now: now, text: text,
+                                     preview: preview,
                                      canEnd: canEnd && !session.isSubagent, selected: selected == session.id) {
                     selected = selected == session.id ? nil : session.id
                 }
@@ -158,6 +163,7 @@ private struct NotchAgentSessionRows: View {
 
 private struct NotchAgentSessionRow: View {
     let session: AgentSession
+    let turn: AgentLiveSession?
     let now: Date
     let text: NotchAgentStrings
     let preview: Bool
@@ -165,7 +171,14 @@ private struct NotchAgentSessionRow: View {
     let selected: Bool
     let toggle: () -> Void
 
-    private var statusText: String { session.status == .working ? text.working : text.waiting }
+    private var statusText: String {
+        switch session.status {
+        case .working: return text.working
+        case .waiting: return text.waiting
+        case .asking: return text.asking
+        }
+    }
+    private var activity: String? { session.isSubagent ? nil : text.activity(of: session) }
     private var endLabel: String { text.endSession(session.kind.displayName + " " + folder) }
     private var elapsed: String { session.started.map { AgentFormat.clock(now.timeIntervalSince($0)) } ?? "" }
     private var folder: String {
@@ -176,7 +189,7 @@ private struct NotchAgentSessionRow: View {
     private func end() { AgentSessionsService.shared.kill(session) }
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(alignment: .top, spacing: 4) {
             if session.isSubagent {
                 content.accessibilityElement(children: .combine)
             } else {
@@ -200,19 +213,72 @@ private struct NotchAgentSessionRow: View {
                 .accessibilityLabel(endLabel)
             }
         }
-        .frame(height: 16)
         .padding(.leading, CGFloat(session.depth) * 12)
     }
 
     private var pick: some View {
         Button(action: toggle) { content }
             .buttonStyle(NotchButtonStyle(cornerRadius: 6, lifts: false))
-            .accessibilityLabel([session.kind.displayName, session.host?.name ?? text.background, folder, statusText]
-                .joined(separator: ", "))
+            .accessibilityLabel([session.kind.displayName, session.host?.name ?? text.background, folder, statusText,
+                                 activity ?? ""].filter { !$0.isEmpty }.joined(separator: ", "))
             .accessibilityValue(elapsed)
     }
 
     private var content: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            line.frame(height: 16)
+            if let activity { activityLine(activity) }
+            if selected { details }
+        }
+        .contentShape(Rectangle())
+    }
+
+    /// What the session does now, under its folder, and what its turn costs.
+    private func activityLine(_ activity: String) -> some View {
+        HStack(spacing: 4) {
+            Text(activity)
+                .foregroundStyle(session.status == .asking ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if let turn {
+                Text([AgentPricing.displayName(turn.model), turn.cost > 0 ? AgentFormat.cost(turn.cost) : ""]
+                        .filter { !$0.isEmpty }.joined(separator: " · "))
+                    .foregroundStyle(.tertiary)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+        }
+        .font(.system(size: 9.5))
+        .padding(.leading, Self.indent)
+        .frame(height: 13)
+        .help(session.waitingFor ?? activity)
+    }
+
+    /// The prompt the turn answers and the latest reply, for a picked session.
+    @ViewBuilder private var details: some View {
+        if let activity = session.activity, activity.prompt != nil || activity.reply != nil {
+            VStack(alignment: .leading, spacing: 2) {
+                if let prompt = activity.prompt { detail("person.fill", prompt) }
+                if let reply = activity.reply { detail("text.bubble", reply) }
+            }
+            .padding(.leading, Self.indent)
+            .padding(.vertical, 2)
+        }
+    }
+
+    private func detail(_ symbol: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            Image(systemName: symbol).font(.system(size: 8)).foregroundStyle(.tertiary).accessibilityHidden(true)
+            Text(value).font(.system(size: 9.5)).foregroundStyle(.white.opacity(0.75)).lineLimit(2)
+        }
+    }
+
+    /// Past the agent's mark, where the host starts.
+    private static let indent: CGFloat = 9 * 1.45 + 1 + 6
+
+    private var line: some View {
         HStack(spacing: 6) {
             glyph
             if !session.isSubagent {
@@ -246,7 +312,6 @@ private struct NotchAgentSessionRow: View {
                 .lineLimit(1)
                 .frame(minWidth: 44, alignment: .trailing)
         }
-        .contentShape(Rectangle())
     }
 
     @ViewBuilder private var glyph: some View {
@@ -296,6 +361,8 @@ private struct NotchAgentSessionRow: View {
         Group {
             if session.status == .working {
                 NotchAgentPulse(tint: session.kind.tint, size: 3)
+            } else if session.status == .asking {
+                Circle().fill(.orange).frame(width: 5, height: 5)
             } else {
                 Circle().fill(.white.opacity(0.28)).frame(width: 5, height: 5)
             }
