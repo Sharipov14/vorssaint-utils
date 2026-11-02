@@ -11,9 +11,60 @@ struct AgentApproval: Identifiable, Equatable {
     /// The command, file or address the tool is about to use.
     let detail: String?
     let received: Date
+    /// The app the session runs in.
+    var host: String?
+    /// Answered in the terminal or the editor; the card says so a moment before it goes.
+    var answered = false
 
     var folder: String { cwd.map { ($0 as NSString).lastPathComponent } ?? "" }
     var deadline: Date { received.addingTimeInterval(AgentApprovalSupport.wait) }
+}
+
+/// A request's tool call followed through its session's transcript. Claude
+/// asks in the terminal at the same time as the hook and, answered there,
+/// leaves the hook waiting; the call's result is the sign.
+// ponytail: a command allowed in the terminal shows its result only once it
+// ends, so a long one keeps its card until then or the wait runs out.
+struct AgentApprovalTrail {
+    let path: String
+    let tool: String
+    let input: NSDictionary
+    let received: Date
+    /// Calls of the tool without a result yet, oldest first: those with the
+    /// request's input, then any other, should Claude have reworded it.
+    private var same: [String] = []
+    private var other: [String] = []
+
+    init(path: String, tool: String, input: NSDictionary, received: Date) {
+        self.path = path
+        self.tool = tool
+        self.input = input
+        self.received = received
+    }
+
+    /// True once a line gives the call its result. Results logged well
+    /// before the request belong to earlier calls and only close those.
+    mutating func settles(with object: [String: Any]) -> Bool {
+        let items = (object["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
+        switch object["type"] as? String {
+        case "assistant":
+            for item in items where item["type"] as? String == "tool_use" && item["name"] as? String == tool {
+                guard let id = item["id"] as? String else { continue }
+                if (item["input"] as? NSDictionary)?.isEqual(input) == true { same.append(id) } else { other.append(id) }
+            }
+        case "user":
+            let recent = AgentLogParser.timestamp(object["timestamp"]).map { $0 >= received.addingTimeInterval(-1) } ?? true
+            for item in items where item["type"] as? String == "tool_result" {
+                guard let id = item["tool_use_id"] as? String else { continue }
+                let ours = id == (same.first ?? other.first)
+                same.removeAll { $0 == id }
+                other.removeAll { $0 == id }
+                if ours && recent { return true }
+            }
+        default: break
+        }
+        return false
+    }
 }
 
 /// What a connection has sent so far.
@@ -35,6 +86,10 @@ enum AgentApprovalSupport {
     static let requestLimit = 4 << 20
     static let pendingLimit = 8
     static let detailLimit = 300
+    /// How long a card answered elsewhere says so.
+    static let answeredNote: TimeInterval = 3
+    /// Read from a transcript when a request comes: its call was written just before.
+    static let trailRead = 1024 * 1024
     /// The tools whose question is more than allow or deny stay in the terminal.
     static let terminalTools: Set<String> = ["AskUserQuestion", "ExitPlanMode"]
 
@@ -173,6 +228,19 @@ enum AgentApprovalSupport {
             .first { !$0.isEmpty }
         return AgentApproval(id: id, cwd: object["cwd"] as? String, tool: tool,
                              detail: detail.map { String($0.prefix(detailLimit)) }, received: now)
+    }
+
+    /// Where the request's call shows: the session's transcript, or a
+    /// subagent's own beside it. Nil when the request names none.
+    static func trail(from body: Data, received: Date) -> AgentApprovalTrail? {
+        guard let object = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
+              let tool = object["tool_name"] as? String,
+              let transcript = object["transcript_path"] as? String, transcript.hasSuffix(".jsonl") else { return nil }
+        var path = transcript
+        if let agent = object["agent_id"] as? String, !agent.isEmpty, !agent.contains("/") {
+            path = String(transcript.dropLast(6)) + "/subagents/" + (agent.hasPrefix("agent-") ? agent : "agent-" + agent) + ".jsonl"
+        }
+        return AgentApprovalTrail(path: path, tool: tool, input: object["tool_input"] as? NSDictionary ?? [:], received: received)
     }
 
     /// curl prints the body; an empty one leaves Claude to ask in the terminal.

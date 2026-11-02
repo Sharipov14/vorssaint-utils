@@ -31,6 +31,8 @@ final class AgentApprovalService: ObservableObject {
     private var settingsRead = false
     /// Each waiting request's connection; cancelling the source closes it.
     private var connections: [UUID: (source: DispatchSourceRead, fd: Int32)] = [:]
+    /// On `queue`: each waiting request's transcript, to see it answered elsewhere.
+    private var followers: [UUID: TranscriptFollower] = [:]
     /// What the first request changed about the island, undone after the last.
     private var opened = false
     private var pinned = false
@@ -62,6 +64,7 @@ final class AgentApprovalService: ObservableObject {
     /// Every waiting request goes back to the terminal.
     func stop() {
         for id in Array(connections.keys) { answer(id, allow: nil) }
+        for approval in pending { remove(approval.id) }
         guard let listener else { return }
         listener.cancel()
         self.listener = nil
@@ -169,6 +172,7 @@ final class AgentApprovalService: ObservableObject {
             guard fd >= 0 else { return }
             var uid = uid_t(), gid = gid_t(), on: Int32 = 1
             var timeout = timeval(tv_sec: 2, tv_usec: 0)
+            var peer = pid_t(0), peerSize = socklen_t(MemoryLayout<pid_t>.size)
             guard getpeereid(fd, &uid, &gid) == 0, uid == getuid(),
                   fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) & ~O_NONBLOCK) == 0,
                   setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size)) == 0,
@@ -176,12 +180,14 @@ final class AgentApprovalService: ObservableObject {
                 close(fd)
                 continue
             }
-            receive(fd)
+            // curl, whose app is the session's.
+            if getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, &peer, &peerSize) != 0 { peer = 0 }
+            receive(fd, peer: peer)
         }
     }
 
     /// On `queue`: the request, read whole within the receive timeout.
-    private func receive(_ fd: Int32) {
+    private func receive(_ fd: Int32, peer: pid_t) {
         var data = Data()
         var buffer = [UInt8](repeating: 0, count: 64 << 10)
         while true {
@@ -194,12 +200,14 @@ final class AgentApprovalService: ObservableObject {
                 close(fd)
                 return
             case .body(let body):
-                guard let approval = AgentApprovalSupport.approval(from: body, id: UUID(), now: Date()) else {
+                let now = Date()
+                guard let approval = AgentApprovalSupport.approval(from: body, id: UUID(), now: now) else {
                     Self.send(nil, to: fd)
                     close(fd)
                     return
                 }
-                DispatchQueue.main.async { self.hold(approval, fd: fd) }
+                let trail = AgentApprovalSupport.trail(from: body, received: now)
+                DispatchQueue.main.async { self.hold(approval, fd: fd, peer: peer, trail: trail) }
                 return
             }
         }
@@ -207,7 +215,7 @@ final class AgentApprovalService: ObservableObject {
 
     // MARK: Asking
 
-    private func hold(_ approval: AgentApproval, fd: Int32) {
+    private func hold(_ approval: AgentApproval, fd: Int32, peer: pid_t, trail: AgentApprovalTrail?) {
         let island = NotchService.shared
         let wasExpanded = island.expanded, wasPinned = island.pinned
         if listener != nil, pending.count < AgentApprovalSupport.pendingLimit {
@@ -230,8 +238,22 @@ final class AgentApprovalService: ObservableObject {
         source.setEventHandler { [weak self] in self?.answer(approval.id, allow: nil) }
         source.setCancelHandler { close(fd) }
         connections[approval.id] = (source, fd)
+        var approval = approval
+        if peer > 0, let app = ResponsibleProcess.regularAppOwner(of: peer) {
+            // "Visual Studio Code", where the running app calls itself "Code".
+            approval.host = app.bundleURL.map { FileManager.default.displayName(atPath: $0.path) } ?? app.localizedName
+        }
         pending.append(approval)
         source.resume()
+        if let trail {
+            let id = approval.id
+            queue.async { [weak self] in
+                guard let self else { return }
+                followers[id] = TranscriptFollower(trail, queue: queue) {
+                    DispatchQueue.main.async { [weak self] in self?.settle(id) }
+                }
+            }
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + AgentApprovalSupport.wait) { [weak self] in
             self?.answer(approval.id, allow: nil)
         }
@@ -239,9 +261,32 @@ final class AgentApprovalService: ObservableObject {
 
     /// Allow or deny from a click; nil hands the question to the terminal.
     func answer(_ id: UUID, allow: Bool?) {
+        guard connections[id] != nil else { return }
+        reply(id, allow: allow)
+        remove(id)
+    }
+
+    /// Answered in the terminal or the editor: the card says where, then goes.
+    private func settle(_ id: UUID) {
+        guard connections[id] != nil, let index = pending.firstIndex(where: { $0.id == id }) else { return }
+        reply(id, allow: nil)
+        pending[index].answered = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + AgentApprovalSupport.answeredNote) { [weak self] in
+            self?.remove(id)
+        }
+    }
+
+    /// Ends the request's connection and stops following its transcript.
+    private func reply(_ id: UUID, allow: Bool?) {
         guard let connection = connections.removeValue(forKey: id) else { return }
         Self.send(allow, to: connection.fd)
         connection.source.cancel()
+        queue.async { [weak self] in self?.followers.removeValue(forKey: id)?.source.cancel() }
+    }
+
+    /// The card goes; with the last one, the island goes back as it was.
+    private func remove(_ id: UUID) {
+        guard pending.contains(where: { $0.id == id }) else { return }
         pending.removeAll { $0.id == id }
         guard pending.isEmpty else { return }
         let island = NotchService.shared
@@ -253,5 +298,75 @@ final class AgentApprovalService: ObservableObject {
     private static func send(_ allow: Bool?, to fd: Int32) {
         let response = AgentApprovalSupport.response(allow: allow)
         _ = response.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
+    }
+}
+
+/// A request's transcript, read on its queue as Claude writes to it, from the
+/// stretch just before the request on. Lines stay in memory only.
+private final class TranscriptFollower {
+    let source: DispatchSourceFileSystemObject
+    private var trail: AgentApprovalTrail
+    private let handle: FileHandle
+    private var offset: UInt64
+    /// The next read starts inside a line.
+    private var partial: Bool
+
+    /// Nil when the transcript cannot be opened. `settled` runs on `queue`, once.
+    init?(_ trail: AgentApprovalTrail, queue: DispatchQueue, settled: @escaping () -> Void) {
+        let fd = open(trail.path, O_EVTONLY | O_CLOEXEC)
+        guard fd >= 0 else { return nil }
+        guard let handle = FileHandle(forReadingAtPath: trail.path), let end = try? handle.seekToEnd() else {
+            close(fd)
+            return nil
+        }
+        let read = UInt64(AgentApprovalSupport.trailRead)
+        self.trail = trail
+        self.handle = handle
+        offset = end > read ? end - read : 0
+        partial = offset > 0
+        source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd,
+            eventMask: [.write, .extend, .rename, .delete, .revoke], queue: queue)
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            // A transcript moved away or gone gets no more lines.
+            if !source.data.isDisjoint(with: [.rename, .delete, .revoke]) { return source.cancel() }
+            if readAdded() {
+                source.cancel()
+                settled()
+            }
+        }
+        source.setCancelHandler {
+            close(fd)
+            try? handle.close()
+        }
+        source.resume()
+        if readAdded() {
+            source.cancel()
+            settled()
+        }
+    }
+
+    /// True once a line read gives the call its result.
+    private func readAdded() -> Bool {
+        let limit = AgentApprovalSupport.trailRead
+        while !source.isCancelled {
+            guard (try? handle.seek(toOffset: offset)) != nil,
+                  let data = try? handle.read(upToCount: limit), !data.isEmpty else { return false }
+            let (lines, consumed) = AgentActivitySupport.lines(data, partialStart: partial)
+            guard consumed > 0 else {
+                // A line longer than a read is skipped; a shorter one is still being written.
+                guard data.count == limit else { return false }
+                offset += UInt64(limit)
+                partial = true
+                continue
+            }
+            offset += UInt64(consumed)
+            partial = false
+            for line in lines {
+                guard let object = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] else { continue }
+                if trail.settles(with: object) { return true }
+            }
+        }
+        return false
     }
 }

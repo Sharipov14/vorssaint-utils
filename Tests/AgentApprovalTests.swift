@@ -7,6 +7,7 @@ enum AgentApprovalTests {
     static func run(_ suite: TestSuite) {
         suite.run("agent approvals: the hook in Claude's settings") { settings(suite) }
         suite.run("agent approvals: a request and its answer") { requests(suite) }
+        suite.run("agent approvals: answered in the terminal") { trails(suite) }
     }
 
     private static let socket = "/Users/o'neil/Library/Application Support/com.vorssaint.utils/agents.sock"
@@ -98,5 +99,39 @@ enum AgentApprovalTests {
                         && output(false).contains(#""behavior":"deny""#)
                         && output(nil).contains("Content-Length: 0\r\n") && output(nil).hasSuffix("\r\n\r\n"),
                      "allow and deny are Claude's decision; no answer is an empty body")
+    }
+
+    private static func trails(_ suite: TestSuite) {
+        let received = Date(timeIntervalSince1970: 1_800_000_000)
+        func body(_ extra: String = "") -> Data {
+            Data(#"{"hook_event_name":"PermissionRequest","transcript_path":"/u/.claude/projects/p/s1.jsonl","tool_name":"Bash","tool_input":{"command":"ls","description":"List"}\#(extra)}"#.utf8)
+        }
+        suite.expect(AgentApprovalSupport.trail(from: body(), received: received)?.path == "/u/.claude/projects/p/s1.jsonl"
+                        && AgentApprovalSupport.trail(from: body(#","agent_id":"a08b""#), received: received)?.path
+                            == "/u/.claude/projects/p/s1/subagents/agent-a08b.jsonl"
+                        && AgentApprovalSupport.trail(from: body(#","agent_id":"../x""#), received: received)?.path
+                            == "/u/.claude/projects/p/s1.jsonl",
+                     "a request follows its session's transcript, or its subagent's")
+
+        func call(_ id: String, _ command: String, tool: String = "Bash") -> [String: Any] {
+            ["type": "assistant", "message": ["content": [["type": "tool_use", "id": id, "name": tool,
+                                                           "input": ["command": command, "description": "List"]]]]]
+        }
+        func result(_ id: String, at offset: TimeInterval) -> [String: Any] {
+            ["type": "user", "timestamp": ISO8601DateFormatter().string(from: received.addingTimeInterval(offset)),
+             "message": ["content": [["type": "tool_result", "tool_use_id": id]]]]
+        }
+        func settles(_ lines: [[String: Any]]) -> Bool {
+            guard var trail = AgentApprovalSupport.trail(from: body(), received: received) else { return false }
+            return lines.contains { trail.settles(with: $0) }
+        }
+        suite.expect(settles([call("old", "ls"), call("t1", "ls"), result("old", at: -60), result("t1", at: 4)])
+                        && !settles([call("old", "ls"), call("t1", "ls"), result("old", at: -60)]),
+                     "the call's result settles it; the same command's earlier result does not")
+        suite.expect(!settles([call("t1", "ls"), call("t2", "pwd"), result("t2", at: 4)])
+                        && !settles([call("t1", "ls"), call("r1", "ls", tool: "Read"), result("r1", at: 4)]),
+                     "another call's result leaves the card")
+        suite.expect(settles([call("t1", "ls -la"), result("t1", at: 4)]) && !settles([call("t1", "ls")]),
+                     "a call Claude reworded still settles once it has its result, and not before")
     }
 }

@@ -38,6 +38,7 @@ struct NotchAgentSessionsList: View {
     @ObservedObject private var usage = AgentUsageService.shared
     @ObservedObject private var approvals = AgentApprovalService.shared
     @Environment(\.locale) private var locale
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selected: String?
 
     var body: some View {
@@ -64,7 +65,10 @@ struct NotchAgentSessionsList: View {
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: NotchAgentSupport.spacing) {
-                        ForEach(pending) { NotchAgentApprovalCard(approval: $0, text: text) }
+                        ForEach(pending) {
+                            NotchAgentApprovalCard(approval: $0, text: text)
+                                .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
+                        }
                         if !sessions.isEmpty {
                             NotchAgentCardChrome {
                                 TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -77,6 +81,7 @@ struct NotchAgentSessionsList: View {
                         }
                         if !orphans.isEmpty { self.orphans }
                     }
+                    .animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.86), value: pending)
                 }
                 .scrollIndicators(.automatic)
             }
@@ -146,7 +151,7 @@ struct NotchAgentSessionsList: View {
 }
 
 /// A tool call Claude waits to have allowed, until the bar runs out and the
-/// terminal asks instead.
+/// terminal asks instead. Answered there, it says so for a moment.
 private struct NotchAgentApprovalCard: View {
     let approval: AgentApproval
     let text: NotchAgentStrings
@@ -155,40 +160,55 @@ private struct NotchAgentApprovalCard: View {
 
     var body: some View {
         NotchAgentCardChrome {
-            VStack(alignment: .leading, spacing: 6) {
+            if approval.answered {
                 HStack(spacing: 5) {
-                    NotchAgentGlyph(provider: .claude, size: 9, working: false)
-                    Text(title).font(.system(size: 10.5, weight: .semibold)).lineLimit(1)
+                    Image(systemName: "checkmark.circle.fill").font(.system(size: 10)).foregroundStyle(.green)
+                        .accessibilityHidden(true)
+                    Text(text.answered(in: approval.host)).font(.system(size: 10.5, weight: .semibold)).lineLimit(1)
                     Spacer(minLength: 4)
                     Text(approval.folder).font(.system(size: 9.5)).foregroundStyle(.secondary).lineLimit(1)
                 }
-                if let detail = approval.detail {
-                    Text(detail)
-                        .font(.system(size: 9.5, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.8))
-                        .lineLimit(2)
-                        .truncationMode(.middle)
-                        .help(detail)
-                }
-                HStack(spacing: 6) {
-                    choice(text.deny, tint: .red) { answer(false) }
-                    choice(text.askInTerminal, tint: .white) { answer(nil) }
-                    Spacer(minLength: 4)
-                    choice(text.allow, tint: .green) { answer(true) }
-                }
-                TimelineView(.periodic(from: .now, by: 0.5)) { context in
-                    let left = max(0, approval.deadline.timeIntervalSince(context.date)) / AgentApprovalSupport.wait
-                    Capsule().fill(.white.opacity(0.12))
-                        .overlay(alignment: .leading) {
-                            GeometryReader { proxy in Capsule().fill(.orange).frame(width: proxy.size.width * left) }
-                        }
-                        .frame(height: 2)
-                }
-                .accessibilityHidden(true)
+            } else {
+                asking
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel([title, approval.folder, approval.detail ?? ""].filter { !$0.isEmpty }.joined(separator: ", "))
+        .accessibilityLabel(approval.answered ? text.answered(in: approval.host)
+            : [title, approval.folder, approval.detail ?? ""].filter { !$0.isEmpty }.joined(separator: ", "))
+    }
+
+    private var asking: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 5) {
+                NotchAgentGlyph(provider: .claude, size: 9, working: false)
+                Text(title).font(.system(size: 10.5, weight: .semibold)).lineLimit(1)
+                Spacer(minLength: 4)
+                Text(approval.folder).font(.system(size: 9.5)).foregroundStyle(.secondary).lineLimit(1)
+            }
+            if let detail = approval.detail {
+                Text(detail)
+                    .font(.system(size: 9.5, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.8))
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .help(detail)
+            }
+            HStack(spacing: 6) {
+                choice(text.deny, tint: .red) { answer(false) }
+                choice(text.askInTerminal, tint: .white) { answer(nil) }
+                Spacer(minLength: 4)
+                choice(text.allow, tint: .green) { answer(true) }
+            }
+            TimelineView(.periodic(from: .now, by: 0.5)) { context in
+                let left = max(0, approval.deadline.timeIntervalSince(context.date)) / AgentApprovalSupport.wait
+                Capsule().fill(.white.opacity(0.12))
+                    .overlay(alignment: .leading) {
+                        GeometryReader { proxy in Capsule().fill(.orange).frame(width: proxy.size.width * left) }
+                    }
+                    .frame(height: 2)
+            }
+            .accessibilityHidden(true)
+        }
     }
 
     private func answer(_ allow: Bool?) { AgentApprovalService.shared.answer(approval.id, allow: allow) }

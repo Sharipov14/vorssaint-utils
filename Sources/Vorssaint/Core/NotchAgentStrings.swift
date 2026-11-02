@@ -134,6 +134,8 @@ struct NotchAgentStrings {
     let deny: String
     let askInTerminal: String
     let approvalFormat: String
+    let answeredInFormat: String
+    let answeredElsewhere: String
 
     func tokens(_ count: String) -> String { String(format: tokensFormat, count) }
     func cached(_ share: String) -> String { String(format: cachedFormat, share) }
@@ -152,6 +154,7 @@ struct NotchAgentStrings {
     func showIn(_ app: String) -> String { String(format: showInFormat, app) }
     func approvalsConfirmMessage(_ command: String) -> String { String(format: approvalsConfirmFormat, command) }
     func approval(_ agent: String, tool: String) -> String { String(format: approvalFormat, agent, tool) }
+    func answered(in app: String?) -> String { app.map { String(format: answeredInFormat, $0) } ?? answeredElsewhere }
 
     /// The line under a session saying what it does now; nil while its log is unknown.
     func activity(of session: AgentSession) -> String? {
@@ -384,7 +387,9 @@ extension NotchAgentStrings {
         allow: "Allow",
         deny: "Deny",
         askInTerminal: "In Terminal",
-        approvalFormat: "%1$@ asks to use %2$@")
+        approvalFormat: "%1$@ asks to use %2$@",
+        answeredInFormat: "Answered in %@",
+        answeredElsewhere: "Answered elsewhere")
 
     static let uk = NotchAgentStrings(
         title: "ШІ-агенти",
@@ -516,7 +521,9 @@ extension NotchAgentStrings {
         allow: "Дозволити",
         deny: "Відхилити",
         askInTerminal: "У терміналі",
-        approvalFormat: "%1$@ просить дозволу на %2$@")
+        approvalFormat: "%1$@ просить дозволу на %2$@",
+        answeredInFormat: "%@: вже відповіли",
+        answeredElsewhere: "Відповіли в іншому місці")
 
     static let ptBR = NotchAgentStrings(
         title: "Agentes de IA",
@@ -648,7 +655,9 @@ extension NotchAgentStrings {
         allow: "Permitir",
         deny: "Negar",
         askInTerminal: "No terminal",
-        approvalFormat: "%1$@ pede para usar %2$@")
+        approvalFormat: "%1$@ pede para usar %2$@",
+        answeredInFormat: "Respondido em %@",
+        answeredElsewhere: "Respondido em outro lugar")
 
     static let es = NotchAgentStrings(
         title: "Agentes de IA",
@@ -780,7 +789,9 @@ extension NotchAgentStrings {
         allow: "Permitir",
         deny: "Denegar",
         askInTerminal: "En el terminal",
-        approvalFormat: "%1$@ pide usar %2$@")
+        approvalFormat: "%1$@ pide usar %2$@",
+        answeredInFormat: "Respondido en %@",
+        answeredElsewhere: "Respondido en otro lugar")
 
     static let sk = NotchAgentStrings(
         title: "AI agenti",
@@ -912,7 +923,9 @@ extension NotchAgentStrings {
         allow: "Povoliť",
         deny: "Zamietnuť",
         askInTerminal: "V termináli",
-        approvalFormat: "%1$@ žiada o použitie %2$@")
+        approvalFormat: "%1$@ žiada o použitie %2$@",
+        answeredInFormat: "%@: už zodpovedané",
+        answeredElsewhere: "Zodpovedané inde")
 
     static let de = NotchAgentStrings(
         title: "KI-Agenten",
@@ -1044,7 +1057,9 @@ extension NotchAgentStrings {
         allow: "Erlauben",
         deny: "Ablehnen",
         askInTerminal: "Im Terminal",
-        approvalFormat: "%1$@ möchte %2$@ verwenden")
+        approvalFormat: "%1$@ möchte %2$@ verwenden",
+        answeredInFormat: "In %@ beantwortet",
+        answeredElsewhere: "Anderswo beantwortet")
 
     static let fr = NotchAgentStrings(
         title: "Agents IA",
@@ -1176,7 +1191,9 @@ extension NotchAgentStrings {
         allow: "Autoriser",
         deny: "Refuser",
         askInTerminal: "Dans le terminal",
-        approvalFormat: "%1$@ demande à utiliser %2$@")
+        approvalFormat: "%1$@ demande à utiliser %2$@",
+        answeredInFormat: "Répondu dans %@",
+        answeredElsewhere: "Répondu ailleurs")
 
     static let it = NotchAgentStrings(
         title: "Agenti IA",
@@ -1308,7 +1325,9 @@ extension NotchAgentStrings {
         allow: "Consenti",
         deny: "Rifiuta",
         askInTerminal: "Nel terminale",
-        approvalFormat: "%1$@ chiede di usare %2$@")
+        approvalFormat: "%1$@ chiede di usare %2$@",
+        answeredInFormat: "Risposto in %@",
+        answeredElsewhere: "Risposto altrove")
 
     static let ru = NotchAgentStrings(
         title: "ИИ-агенты",
@@ -1440,7 +1459,9 @@ extension NotchAgentStrings {
         allow: "Разрешить",
         deny: "Отклонить",
         askInTerminal: "В терминале",
-        approvalFormat: "%1$@ просит разрешения на %2$@")
+        approvalFormat: "%1$@ просит разрешения на %2$@",
+        answeredInFormat: "%@: уже ответили",
+        answeredElsewhere: "Ответили в другом месте")
 
     static let tr = NotchAgentStrings(
         title: "YZ Ajanları",
@@ -1572,7 +1593,9 @@ extension NotchAgentStrings {
         allow: "İzin ver",
         deny: "Reddet",
         askInTerminal: "Terminalde",
-        approvalFormat: "%1$@, %2$@ kullanmak istiyor")
+        approvalFormat: "%1$@, %2$@ kullanmak istiyor",
+        answeredInFormat: "%@: yanıtlandı",
+        answeredElsewhere: "Başka yerde yanıtlandı")
 
     static let ja = NotchAgentStrings(
         title: "AIエージェント",
@@ -1704,7 +1727,9 @@ extension NotchAgentStrings {
         allow: "許可",
         deny: "拒否",
         askInTerminal: "ターミナルで",
-        approvalFormat: "%1$@が%2$@の使用を求めています")
+        approvalFormat: "%1$@が%2$@の使用を求めています",
+        answeredInFormat: "%@で回答済み",
+        answeredElsewhere: "別の場所で回答済み")
 
     static let ko = NotchAgentStrings(
         title: "AI 에이전트",
@@ -1836,7 +1861,9 @@ extension NotchAgentStrings {
         allow: "허용",
         deny: "거부",
         askInTerminal: "터미널에서",
-        approvalFormat: "%1$@이(가) %2$@ 사용을 요청합니다")
+        approvalFormat: "%1$@이(가) %2$@ 사용을 요청합니다",
+        answeredInFormat: "%@에서 응답함",
+        answeredElsewhere: "다른 곳에서 응답함")
 
     static let zhHans = NotchAgentStrings(
         title: "AI 智能体",
@@ -1968,7 +1995,9 @@ extension NotchAgentStrings {
         allow: "允许",
         deny: "拒绝",
         askInTerminal: "在终端中",
-        approvalFormat: "%1$@ 请求使用 %2$@")
+        approvalFormat: "%1$@ 请求使用 %2$@",
+        answeredInFormat: "已在 %@ 中回复",
+        answeredElsewhere: "已在别处回复")
 
     static let zhTW = NotchAgentStrings(
         title: "AI 代理",
@@ -2100,7 +2129,9 @@ extension NotchAgentStrings {
         allow: "允許",
         deny: "拒絕",
         askInTerminal: "在終端機中",
-        approvalFormat: "%1$@ 要求使用 %2$@")
+        approvalFormat: "%1$@ 要求使用 %2$@",
+        answeredInFormat: "已在 %@ 中回覆",
+        answeredElsewhere: "已在別處回覆")
 
     static let zhHK = NotchAgentStrings(
         title: "AI 代理",
@@ -2232,5 +2263,7 @@ extension NotchAgentStrings {
         allow: "允許",
         deny: "拒絕",
         askInTerminal: "在終端機中",
-        approvalFormat: "%1$@ 要求使用 %2$@")
+        approvalFormat: "%1$@ 要求使用 %2$@",
+        answeredInFormat: "已在 %@ 中回覆",
+        answeredElsewhere: "已在別處回覆")
 }
