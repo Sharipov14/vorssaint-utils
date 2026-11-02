@@ -386,6 +386,28 @@ enum AgentSessionsSupport {
 
     // MARK: Showing
 
+    /// Where editors built on VS Code keep their state, in Application Support.
+    static let editorStateFolders = ["com.microsoft.VSCode": "Code", "com.microsoft.VSCodeInsiders": "Code - Insiders"]
+
+    /// The folder of the editor's window the session runs in: the deepest one
+    /// open that holds `cwd`, from the editor's `storage.json`. Opening a
+    /// folder that has a window brings that window forward; nil when none
+    /// has, so no new window opens.
+    // ponytail: windows of a .code-workspace name no folder and are not found;
+    // the editor then comes forward on its last window.
+    static func editorFolder(storage: Data, cwd: String) -> URL? {
+        guard let object = (try? JSONSerialization.jsonObject(with: storage)) as? [String: Any],
+              let state = object["windowsState"] as? [String: Any] else { return nil }
+        let windows = (state["openedWindows"] as? [[String: Any]] ?? []) + [state["lastActiveWindow"] as? [String: Any] ?? [:]]
+        let path = (cwd as NSString).standardizingPath
+        return windows.compactMap { ($0["folder"] as? String).flatMap(URL.init(string:)) }
+            .filter { folder in
+                let open = folder.standardizedFileURL.path
+                return folder.isFileURL && !open.isEmpty && (path == open || path.hasPrefix(open == "/" ? open : open + "/"))
+            }
+            .max { $0.standardizedFileURL.path.count < $1.standardizedFileURL.path.count }
+    }
+
     /// A script that puts the Terminal or iTerm2 tab on `tty` (`ttys003`) in
     /// front of its window and the window in front of the app's; nil for any
     /// other app, which can only be brought forward whole.

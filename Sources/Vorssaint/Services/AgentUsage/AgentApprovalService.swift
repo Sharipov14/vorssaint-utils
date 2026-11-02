@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Vorssaint
 
+import AppKit
 import Darwin
-import Foundation
 
 /// Claude's permission requests, asked in the notch. It listens only while
 /// its hook is in Claude's settings and the AI page can show, and nothing
@@ -242,6 +242,9 @@ final class AgentApprovalService: ObservableObject {
         if peer > 0, let app = ResponsibleProcess.regularAppOwner(of: peer) {
             // "Visual Studio Code", where the running app calls itself "Code".
             approval.host = app.bundleURL.map { FileManager.default.displayName(atPath: $0.path) } ?? app.localizedName
+            approval.hostPID = app.processIdentifier
+            // Read while curl still runs: it shares Claude's terminal.
+            approval.tty = AgentSessionsService.terminal(near: peer)
         }
         pending.append(approval)
         source.resume()
@@ -264,6 +267,16 @@ final class AgentApprovalService: ObservableObject {
         guard connections[id] != nil else { return }
         reply(id, allow: allow)
         remove(id)
+    }
+
+    /// Hands the question to the terminal and goes there: the session's tab,
+    /// or its editor window.
+    func handBack(_ id: UUID) {
+        guard let approval = pending.first(where: { $0.id == id }) else { return }
+        answer(id, allow: nil)
+        NotchService.shared.collapse()
+        guard let pid = approval.hostPID, let app = NSRunningApplication(processIdentifier: pid) else { return }
+        AgentSessionsService.show(app, tty: approval.tty, cwd: approval.cwd)
     }
 
     /// Answered in the terminal or the editor: the card says where, then goes.

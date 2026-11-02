@@ -195,7 +195,7 @@ private struct NotchAgentApprovalCard: View {
             }
             HStack(spacing: 6) {
                 choice(text.deny, tint: .red) { answer(false) }
-                choice(text.askInTerminal, tint: .white) { answer(nil) }
+                choice(text.askInTerminal, tint: .white) { AgentApprovalService.shared.handBack(approval.id) }
                 Spacer(minLength: 4)
                 choice(text.allow, tint: .green) { answer(true) }
             }

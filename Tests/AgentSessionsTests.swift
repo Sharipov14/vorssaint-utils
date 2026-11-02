@@ -109,6 +109,19 @@ enum AgentSessionsTests {
                             AgentSessionsSupport.focusScript(bundleID: "com.apple.Terminal", tty: $0) == nil
                         },
                      "another app, or no terminal, gets no script")
+
+        let storage = Data(#"""
+            {"windowsState":{"lastActiveWindow":{"folder":"file:///Users/x/My%20app"},
+             "openedWindows":[{"folder":"file:///Users/x/My%20app"},{"folder":"file:///Users/x/My%20app/web"},
+                              {"workspaceIdentifier":{"id":"1","configURIPath":"file:///Users/x/all.code-workspace"}},
+                              {"folder":"vscode-remote://ssh-remote%2Bbox/Users/x/api"}]}}
+            """#.utf8)
+        func folder(_ cwd: String) -> String? { AgentSessionsSupport.editorFolder(storage: storage, cwd: cwd)?.path }
+        suite.expect(folder("/Users/x/My app") == "/Users/x/My app" && folder("/Users/x/My app/web/src") == "/Users/x/My app/web",
+                     "a session goes to the window of the deepest open folder holding it")
+        suite.expect(folder("/Users/x/My application") == nil && folder("/Users/x/api") == nil
+                        && AgentSessionsSupport.editorFolder(storage: Data("{}".utf8), cwd: "/Users/x/My app") == nil,
+                     "a folder no local window has opens nothing")
     }
 
     private static func tree(_ suite: TestSuite) {

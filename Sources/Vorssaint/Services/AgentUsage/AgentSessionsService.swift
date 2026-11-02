@@ -122,23 +122,47 @@ final class AgentSessionsService: ObservableObject {
 
     // MARK: Showing
 
-    /// Brings the session's app forward, in Terminal and iTerm2 on its own tab.
-    /// The tab is picked by AppleScript off the main thread, as it waits on the
-    /// app; a declined Automation or a tab that is gone still shows the app.
     func show(_ session: AgentSession) {
         guard let host = session.host, let app = NSRunningApplication(processIdentifier: host.pid) else { return }
         // A pid reused since sits on someone else's terminal.
-        let script = KillProcessService.startTime(for: session.pid) == session.identity
-            ? Self.terminal(of: session.pid).flatMap { AgentSessionsSupport.focusScript(bundleID: app.bundleIdentifier, tty: $0) }
-            : nil
-        guard let script else {
-            Self.activate(app)
-            return
-        }
+        let tty = KillProcessService.startTime(for: session.pid) == session.identity ? Self.terminal(of: session.pid) : nil
+        Self.show(app, tty: tty, cwd: session.cwd)
+    }
+
+    /// Brings the app forward: Terminal and iTerm2 on the session's own tab,
+    /// VS Code on the window of its folder. Both are found off the main
+    /// thread, as AppleScript waits on the app; a declined Automation, a tab
+    /// that is gone or a folder no window has still shows the app.
+    static func show(_ app: NSRunningApplication, tty: String?, cwd: String?) {
         DispatchQueue.global(qos: .userInitiated).async {
-            AppleScriptRunner.run(script)
-            DispatchQueue.main.async { Self.activate(app) }
+            if let tty, let script = AgentSessionsSupport.focusScript(bundleID: app.bundleIdentifier, tty: tty) {
+                AppleScriptRunner.run(script)
+            } else if let cwd, let bundleURL = app.bundleURL,
+                      let state = app.bundleIdentifier.flatMap({ AgentSessionsSupport.editorStateFolders[$0] }),
+                      let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first,
+                      let storage = try? Data(contentsOf: support.appending(path: state + "/User/globalStorage/storage.json")),
+                      let folder = AgentSessionsSupport.editorFolder(storage: storage, cwd: cwd) {
+                DispatchQueue.main.async {
+                    ActivationHandoff.yield(to: app)
+                    NSWorkspace.shared.open([folder], withApplicationAt: bundleURL, configuration: NSWorkspace.OpenConfiguration())
+                }
+                return
+            }
+            DispatchQueue.main.async { activate(app) }
         }
+    }
+
+    /// The terminal of the process or, as a hook can run in a session of its
+    /// own, of its nearest parent that has one.
+    static func terminal(near pid: pid_t) -> String? {
+        var pid = pid
+        for _ in 0..<4 where pid > 1 {
+            if let tty = terminal(of: pid) { return tty }
+            var info = proc_bsdinfo()
+            guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, Int32(MemoryLayout<proc_bsdinfo>.size)) > 0 else { return nil }
+            pid = pid_t(info.pbi_ppid)
+        }
+        return nil
     }
 
     private static func activate(_ app: NSRunningApplication) {
@@ -244,10 +268,11 @@ final class AgentSessionsService: ObservableObject {
     }
 
     /// The terminal the process reads, as `ttys003`; "??" or nil without one.
+    /// Nil for a process with no terminal.
     private static func terminal(of pid: pid_t) -> String? {
         var info = proc_bsdinfo()
         let size = Int32(MemoryLayout<proc_bsdinfo>.size)
-        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size,
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size, info.e_tdev != UInt32.max,
               let name = devname(dev_t(bitPattern: info.e_tdev), S_IFCHR) else { return nil }
         return String(cString: name)
     }

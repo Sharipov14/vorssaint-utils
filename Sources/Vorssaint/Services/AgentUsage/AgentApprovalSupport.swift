@@ -11,8 +11,11 @@ struct AgentApproval: Identifiable, Equatable {
     /// The command, file or address the tool is about to use.
     let detail: String?
     let received: Date
-    /// The app the session runs in.
+    /// The app the session runs in, its process and the session's terminal,
+    /// to go back to it.
     var host: String?
+    var hostPID: Int32?
+    var tty: String?
     /// Answered in the terminal or the editor; the card says so a moment before it goes.
     var answered = false
 
