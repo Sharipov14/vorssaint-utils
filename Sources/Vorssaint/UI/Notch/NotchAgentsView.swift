@@ -19,6 +19,7 @@ struct NotchAgentsView: View {
     @ObservedObject private var approvals = AgentApprovalService.shared
     @ObservedObject private var l10n = L10n.shared
     @Environment(\.notchSettingsPreview) private var preview
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(DefaultsKey.notchAgentsPeriod) private var period = AgentPeriod.today.rawValue
     @AppStorage(DefaultsKey.notchAgentsLimitDisplay) private var display = NotchAgentLimitDisplay.remaining.rawValue
     @AppStorage(DefaultsKey.notchAgentsCardOrder) private var cardOrder = ""
@@ -90,9 +91,12 @@ struct NotchAgentsView: View {
         .environment(\.locale, l10n.language.formattingLocale())
         .notchBand(leading: {
             if shownTab == .live, openDiff != nil {
-                NotchBandBackButton(title: text.liveTab) { openDiff = nil }
+                NotchBandBackButton(title: text.liveTab) {
+                    withAnimation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.88)) { openDiff = nil }
+                }
+                .transition(.opacity)
             } else {
-                tabs
+                tabs.transition(.opacity)
             }
         }, trailing: {
             if shownTab == .stats && showsPeriod { periodMenu }

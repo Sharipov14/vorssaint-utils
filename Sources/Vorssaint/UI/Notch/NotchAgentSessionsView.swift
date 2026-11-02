@@ -69,6 +69,7 @@ struct NotchAgentSessionsList: View {
     @ObservedObject private var service = AgentSessionsService.shared
     @ObservedObject private var usage = AgentUsageService.shared
     @Environment(\.locale) private var locale
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selected: String?
 
     var body: some View {
@@ -83,6 +84,7 @@ struct NotchAgentSessionsList: View {
         Group {
             if let opened {
                 NotchAgentDiffView(file: opened)
+                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(x: 24)))
             } else if !preview && !service.loaded {
                 ProgressView().controlSize(.small).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if sessions.isEmpty && orphans.isEmpty {
@@ -93,12 +95,12 @@ struct NotchAgentSessionsList: View {
                 }
             } else {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: NotchAgentSupport.spacing) {
+                    VStack(alignment: .leading, spacing: 6) {
                         if !sessions.isEmpty {
-                            NotchAgentCardChrome {
-                                TimelineView(.periodic(from: .now, by: 1)) { context in
-                                    NotchAgentSessionRows(sessions: sessions, turns: turns, now: context.date, text: text,
-                                                          preview: preview, selected: $selected) { session, file in
+                            TimelineView(.periodic(from: .now, by: 1)) { context in
+                                NotchAgentSessionRows(sessions: sessions, turns: turns, now: context.date, text: text,
+                                                      preview: preview, selected: $selected) { session, file in
+                                    withAnimation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.88)) {
                                         diff = AgentDiffTarget(session: session.id, path: file.path)
                                     }
                                 }
@@ -108,6 +110,7 @@ struct NotchAgentSessionsList: View {
                     }
                 }
                 .scrollIndicators(.automatic)
+                .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(x: -24)))
             }
         }
         .frame(width: size.width, height: size.height, alignment: .top)
@@ -665,7 +668,7 @@ private struct NotchAgentSessionRows: View {
 
     var body: some View {
         let canEnd = canEnd
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             ForEach(sessions) { session in
                 NotchAgentSessionRow(session: session, turn: session.log.flatMap { turns[$0] }, now: now, text: text,
                                      preview: preview,
@@ -715,12 +718,11 @@ private struct NotchAgentSessionRow: View {
         session.host.flatMap { session.isSubagent ? nil : text.showIn($0.name) }
     }
 
-    /// The turn's model and cost, and what the session holds in memory.
-    private var meta: String? {
-        let parts = [turn.map { AgentPricing.displayName($0.model) },
-                     turn.flatMap { $0.cost > 0 ? AgentFormat.cost($0.cost) : nil },
-                     session.memory > 0 ? sessionMemory.string(fromByteCount: session.memory) : nil]
-            .compactMap { $0 }.filter { !$0.isEmpty }
+    /// The turn's model and cost.
+    private var model: String? {
+        guard let turn else { return nil }
+        let parts = [AgentPricing.displayName(turn.model), turn.cost > 0 ? AgentFormat.cost(turn.cost) : ""]
+            .filter { !$0.isEmpty }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
@@ -731,29 +733,109 @@ private struct NotchAgentSessionRow: View {
         AgentSessionsService.shared.show(session)
     }
 
+    private static let radius: CGFloat = 14
+    private static let inset: CGFloat = 12
+    private static let glyphSize: CGFloat = 11
+    private static let hostWidth: CGFloat = 90
+    private static let column: CGFloat = 10
+    private static let firstRow: CGFloat = 18
+    private static let secondRow: CGFloat = 15
+    /// Past the mark and the host, where the name and all under it start.
+    private static let mainIndent: CGFloat = glyphSize * 1.45 + 1 + column + hostWidth + column
+
     var body: some View {
-        HStack(alignment: .top, spacing: 6) {
-            if session.isSubagent {
-                content.accessibilityElement(children: .combine)
-            } else {
+        let shape = RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                header
+                buttons.padding(.trailing, Self.inset)
+            }
+            // Ending waits for the card to be picked, under the way to open it.
+            if selected && (hasDetails || canEnd) {
+                HStack(alignment: .bottom, spacing: 8) {
+                    details.frame(maxWidth: .infinity, alignment: .leading)
+                    if canEnd { round("xmark", endLabel, action: end) }
+                }
+                .padding(.leading, Self.inset + Self.mainIndent)
+                .padding(.trailing, Self.inset)
+                .padding(.bottom, 9)
+                .transition(.opacity.combined(with: .offset(y: -6)))
+            }
+        }
+        .modifier(NotchControlSurface(cornerRadius: Self.radius, selected: selected, interactive: false))
+        .overlay { shape.strokeBorder(session.kind.tint.opacity(selected ? 0.45 : 0)).allowsHitTesting(false) }
+        .padding(.leading, CGFloat(session.depth) * 14)
+    }
+
+    /// The card's top, picked as a whole; a subagent's only says what it is.
+    @ViewBuilder private var header: some View {
+        let summary = summary
+            .padding(.leading, Self.inset)
+            .padding(.vertical, 9)
+            .contentShape(Rectangle())
+        if session.isSubagent {
+            summary.accessibilityElement(children: .combine)
+        } else {
+            Button(action: toggle) { summary }
+                .buttonStyle(NotchButtonStyle(cornerRadius: Self.radius, lifts: false, highlights: false))
+                .accessibilityLabel([session.kind.displayName, session.host?.name ?? text.background, folder, statusText,
+                                     activity ?? ""].filter { !$0.isEmpty }.joined(separator: ", "))
+                .accessibilityValue(elapsed)
+                .accessibilityAddTraits(selected ? .isSelected : [])
                 // VoiceOver reaches ending without revealing its button.
-                pick.accessibilityActions {
+                .accessibilityActions {
                     if let showLabel, !preview { Button(showLabel, action: show) }
                     if canEnd { Button(endLabel, action: end) }
                 }
-            }
-            // Ending waits for the row to be picked; opening is always at hand.
-            if canEnd && selected {
-                round("xmark", endLabel, action: end).transition(.opacity)
-            }
-            if let showLabel {
-                round("arrow.up.forward", showLabel, action: show).disabled(preview)
-            } else {
-                // A row with nothing to open keeps its times in the column.
-                Color.clear.frame(width: 22, height: 22)
+        }
+    }
+
+    /// Opening is always at hand.
+    @ViewBuilder private var buttons: some View {
+        if let showLabel {
+            round("arrow.up.forward", showLabel, action: show).disabled(preview)
+        } else {
+            // A card with nothing to open keeps its time in the column.
+            Color.clear.frame(width: 22, height: 22)
+        }
+    }
+
+    /// The agent's mark, then in columns every card shares: where it runs
+    /// over what it holds, its folder over what it does now, and how long.
+    private var summary: some View {
+        HStack(spacing: Self.column) {
+            glyph
+            HStack(alignment: .top, spacing: Self.column) {
+                if !session.isSubagent {
+                    VStack(alignment: .leading, spacing: 3) {
+                        host.frame(height: Self.firstRow)
+                        if session.memory > 0 {
+                            Text(sessionMemory.string(fromByteCount: session.memory))
+                                .font(.system(size: 11))
+                                .foregroundStyle(.tertiary)
+                                .monospacedDigit()
+                                .lineLimit(1)
+                                .frame(height: Self.secondRow)
+                        }
+                    }
+                    .frame(width: Self.hostWidth, alignment: .leading)
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        name
+                        ports
+                    }
+                    .frame(height: Self.firstRow)
+                    if let activity { activityLine(activity).frame(height: Self.secondRow) }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 5) {
+                    status
+                    time
+                }
+                .frame(height: Self.firstRow)
             }
         }
-        .padding(.leading, CGFloat(session.depth) * 14)
     }
 
     private func round(_ symbol: String, _ label: String, action: @escaping () -> Void) -> some View {
@@ -770,32 +852,6 @@ private struct NotchAgentSessionRow: View {
         .accessibilityLabel(label)
     }
 
-    private var pick: some View {
-        Button(action: toggle) { content }
-            .buttonStyle(NotchButtonStyle(cornerRadius: 8, lifts: false))
-            .accessibilityLabel([session.kind.displayName, session.host?.name ?? text.background, folder, statusText,
-                                 activity ?? ""].filter { !$0.isEmpty }.joined(separator: ", "))
-            .accessibilityValue(elapsed)
-    }
-
-    private var content: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            line.frame(height: 22)
-            if let activity { activityLine(activity) }
-            if let meta {
-                Text(meta)
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(.tertiary)
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .padding(.leading, Self.indent)
-                    .frame(height: 14)
-            }
-            if selected { details }
-        }
-        .contentShape(Rectangle())
-    }
-
     /// What the session does now, under its folder, and the lines it changed.
     private func activityLine(_ activity: String) -> some View {
         HStack(spacing: 5) {
@@ -810,16 +866,21 @@ private struct NotchAgentSessionRow: View {
             }
         }
         .font(.system(size: 11))
-        .padding(.leading, Self.indent)
-        .frame(height: 15)
         .help(session.waitingFor ?? activity)
     }
 
-    /// The prompt the turn answers, the latest reply and the files changed, for a picked session.
+    /// The turn's model and cost, the prompt it answers, the latest reply and
+    /// the files changed, for a picked session.
+    private var hasDetails: Bool {
+        let activity = session.activity
+        return model != nil || activity?.prompt != nil || activity?.reply != nil || activity?.files.isEmpty == false
+    }
+
     @ViewBuilder private var details: some View {
         let activity = session.activity
-        if activity?.prompt != nil || activity?.reply != nil || activity?.files.isEmpty == false {
+        if hasDetails {
             VStack(alignment: .leading, spacing: 3) {
+                if let model { detail("cpu", model) }
                 if let prompt = activity?.prompt { detail("person.fill", prompt) }
                 if let reply = activity?.reply { detail("text.bubble", reply) }
                 ForEach(activity?.files ?? []) { file in
@@ -830,8 +891,6 @@ private struct NotchAgentSessionRow: View {
                     .help(file.path)
                 }
             }
-            .padding(.leading, Self.indent)
-            .padding(.vertical, 3)
         }
     }
 
@@ -857,40 +916,31 @@ private struct NotchAgentSessionRow: View {
         }
     }
 
-    private static let glyphSize: CGFloat = 11
-    /// Past the agent's mark, where the host starts.
-    private static let indent: CGFloat = glyphSize * 1.45 + 1 + 7
-
-    private var line: some View {
-        HStack(spacing: 7) {
-            glyph
-            if !session.isSubagent {
-                host
-                Text(folder)
-                    .font(.system(size: 13, weight: .semibold))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .help([session.title, session.cwd].compactMap { $0 }.joined(separator: "\n"))
-            } else {
-                Text(folder)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            ports
-            status
-            // As wide as the longest usual time, so the status dots line up.
-            ZStack(alignment: .trailing) {
-                Text("00:00:00").hidden()
-                Text(elapsed).foregroundStyle(session.kind.tint)
-            }
-            .font(.system(size: 11.5, weight: .medium))
-            .monospacedDigit()
-            .lineLimit(1)
+    @ViewBuilder private var name: some View {
+        if session.isSubagent {
+            Text(folder)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        } else {
+            Text(folder)
+                .font(.system(size: 13, weight: .semibold))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .help([session.title, session.cwd].compactMap { $0 }.joined(separator: "\n"))
         }
+    }
+
+    /// As wide as the longest usual time, so the status dots line up.
+    private var time: some View {
+        ZStack(alignment: .trailing) {
+            Text("00:00:00").hidden()
+            Text(elapsed).foregroundStyle(session.kind.tint)
+        }
+        .font(.system(size: 11.5, weight: .medium))
+        .monospacedDigit()
+        .lineLimit(1)
     }
 
     @ViewBuilder private var glyph: some View {
@@ -916,14 +966,12 @@ private struct NotchAgentSessionRow: View {
                 }
                 Text(host.name).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
             }
-            .frame(maxWidth: 96, alignment: .leading)
             .help(host.name)
         } else {
             Text(text.background)
                 .font(.system(size: 11))
                 .foregroundStyle(.tertiary)
                 .lineLimit(1)
-                .frame(maxWidth: 96, alignment: .leading)
         }
     }
 
