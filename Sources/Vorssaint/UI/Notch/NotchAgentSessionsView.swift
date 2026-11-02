@@ -736,9 +736,9 @@ private struct NotchAgentSessionRow: View {
     private static let radius: CGFloat = 14
     private static let inset: CGFloat = 12
     private static let glyphSize: CGFloat = 11
-    private static let hostWidth: CGFloat = 100
+    private static let hostWidth: CGFloat = 80
     /// The host's name past this many characters ends in an ellipsis.
-    private static let hostNameLimit = 12
+    private static let hostNameLimit = 10
     private static let column: CGFloat = 10
     private static let firstRow: CGFloat = 18
     private static let secondRow: CGFloat = 15

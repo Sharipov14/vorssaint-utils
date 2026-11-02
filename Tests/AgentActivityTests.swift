@@ -152,8 +152,9 @@ enum AgentActivityTests {
                         && AgentActivitySupport.target([:]).isEmpty,
                      "a call's file comes before its pattern")
         suite.expect(AgentActivitySupport.line(String(repeating: "a", count: 300), limit: 10)?.count == 10
-                        && AgentActivitySupport.line(" \n ", limit: 10) == nil,
-                     "a line is cut to its limit, and blank text is none")
+                        && AgentActivitySupport.line(" \n ", limit: 10) == nil
+                        && AgentActivitySupport.line("IntelliJ IDEA", limit: 10) == "IntelliJ…",
+                     "a line is cut to its limit with no space before the ellipsis, and blank text is none")
 
         let chunk = Data("tail of a line\n{\"a\":1}\n{\"b\":2}\n{\"c\"".utf8)
         let read = AgentActivitySupport.lines(chunk, partialStart: true)

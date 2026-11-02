@@ -152,7 +152,7 @@ enum AgentActivitySupport {
         guard let text else { return nil }
         let words = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         guard !words.isEmpty else { return nil }
-        return words.count > limit ? String(words.prefix(limit - 1)) + "…" : words
+        return words.count > limit ? String(words.prefix(limit - 1)).trimmingCharacters(in: .whitespaces) + "…" : words
     }
 
     /// A reply's Markdown read as text: no emphasis, code ticks or heading marks.
