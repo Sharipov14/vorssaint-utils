@@ -26,6 +26,7 @@ enum NotchAgentTests {
         AgentUsageSummaryCacheTests.run(suite)
         limits(suite)
         strip(suite)
+        NotchAgentLimitReadingTests.run(suite)
         liveTurns(suite)
         reading(suite)
         AgentUsageReadTests.run(suite)
@@ -36,6 +37,7 @@ enum NotchAgentTests {
         claudeApp(suite)
         AgentCodexResetTests.run(suite)
         AgentClaudeServerTests.run(suite)
+        ClaudeAccountProfileTests.run(suite)
         CodexAccountLimitsTests.run(suite)
         preferences(suite)
         limitUse(suite)
@@ -321,7 +323,7 @@ enum NotchAgentTests {
                         provider: .codex, tracksTurns: true, modified: now, now: now)
         }
         func finished(_ events: [AgentUsageEvent], _ wanted: AgentProvider) -> Bool {
-            events.contains { if case .finished(let provider, _, _, _, _) = $0 { provider == wanted } else { false } }
+            events.contains { if case .finished(let provider, _, _, _, _, _) = $0 { provider == wanted } else { false } }
         }
         _ = feed(claudeUser())
         _ = feed(claudeAssistant(stop: "tool_use"))
@@ -437,7 +439,7 @@ enum NotchAgentTests {
         _ = feed(claudeAssistant(id: "msg_2", request: "req_2", stop: "end_turn", sidechain: true))
         suite.expect(store.live.count == 1, "a subagent finishing does not finish the turn it serves")
         let finished = feed(claudeAssistant(id: "msg_3", request: "req_3", stop: "end_turn", time: "2026-09-21T23:44:30.000Z"))
-        guard case .finished(let provider, let duration, let cost, let tokens, let project)? = finished.first else {
+        guard case .finished(let provider, let duration, let cost, let tokens, let project, _)? = finished.first else {
             suite.expect(false, "the end of a turn is reported")
             return
         }
@@ -531,7 +533,7 @@ enum NotchAgentTests {
                         && store.codexPlan == "pro",
                      "the limits Codex logs arrive with their length, renewal and plan")
         suite.expect(events == [.finished(provider: .codex, duration: 458.431, cost: usage?.cost ?? 0,
-                                          tokens: usage?.tokens.total ?? 0, project: "web")],
+                                          tokens: usage?.tokens.total ?? 0, project: "web", file: "main")],
                      "a completed task reports the duration Codex measured")
 
         // A model with an allowance of its own logs it under another id.
@@ -689,7 +691,7 @@ enum NotchAgentTests {
         suite.expect(abs(totalCost - 0.0057) < 0.000001,
                      "OpenCode total cost aggregates reported costs")
         suite.expect(storeEvents == [.finished(provider: .opencode, duration: 20, cost: 0.0057,
-                                              tokens: 1800, project: "backend")],
+                                              tokens: 1800, project: "backend", file: "opencode.db#s_oc_1")],
                      "OpenCode turn finish generates .finished usage event with accumulated turn cost and tokens")
 
         // 5. Model pricing fallback: unpriced vs list price fallback
@@ -950,7 +952,7 @@ enum NotchAgentTests {
                      "completion date uses time.completed timestamp")
         let appliedEvents = store17.apply(aEntries, file: "db#s17", provider: .opencode, tracksTurns: true, modified: now,
                                           now: Date(timeIntervalSince1970: 1_790_089_425))
-        suite.expect(appliedEvents == [.finished(provider: .opencode, duration: 25, cost: 0.01, tokens: 500, project: "p")],
+        suite.expect(appliedEvents == [.finished(provider: .opencode, duration: 25, cost: 0.01, tokens: 500, project: "p", file: "db#s17")],
                      "store emits .finished event when OpenCode assistant turn stops")
 
         // Reading the database, cost sources and repricing, subagents, and
@@ -1343,7 +1345,7 @@ enum NotchAgentTests {
 
         // Verify parent finish emits single .finished event with combined tokens and parent project/model
         suite.expect(collectedEvents == [.finished(provider: .opencode, duration: 20, cost: 0.005,
-                                                   tokens: 300, project: "proj")],
+                                                   tokens: 300, project: "proj", file: "\(dbPath)#s_parent")],
                      "parent finish emits single .finished event with combined tokens, cost, and parent project")
         suite.expect(store.turns["\(dbPath)#s_parent"] == nil, "parent turn is closed after parent finish")
     }
@@ -1536,7 +1538,7 @@ enum NotchAgentTests {
             read(at: 1_790_090_061)
             suite.expect(store.records.filter { $0.provider == .opencode }.count == 3
                             && events == [.finished(provider: .opencode, duration: 60, cost: 0.875, tokens: 1460,
-                                                    project: "two")],
+                                                    project: "two", file: "\(path)#ses_two")],
                          "on \(layout), the compaction's cost counts and the task finishes once, after its last step")
             suite.expect(!payloads.contains { $0.contains("secret") },
                          "on \(layout), no prompt, reply, tool output or summary leaves the database")
@@ -1689,7 +1691,7 @@ enum NotchAgentTests {
             return
         }
         read(at: 1_790_093_071)
-        suite.expect(events == [.finished(provider: .opencode, duration: 70, cost: 0.75, tokens: 360, project: "slow")],
+        suite.expect(events == [.finished(provider: .opencode, duration: 70, cost: 0.75, tokens: 360, project: "slow", file: "\(path)#ses_slow")],
                      "a step OpenCode 2 saves late keeps the whole task's cost and tokens")
     }
 
@@ -1939,7 +1941,7 @@ enum NotchAgentTests {
         suite.expect(all.filter { if case .turnBegan = $0 { return true }; return false }.count == 1,
                      "a compaction in the middle of a task keeps one turn")
         suite.expect(events.count == 1 && events.first.map {
-            if case .finished(_, let duration, let cost, let tokens, _) = $0 {
+            if case .finished(_, let duration, let cost, let tokens, _, _) = $0 {
                 return duration == 30 && abs(cost - 0.06) < 0.000001 && tokens == 660
             }
             return false
@@ -2140,7 +2142,7 @@ enum NotchAgentTests {
                      "a later prompt closes the stopped task quietly and opens its own")
         let answer = feed(#"{"id":"a2","parentID":"u2","session_id":"s_x","time_created":1790091121,"role":"assistant","cost":0.01,"tokens":{"input":100,"output":10},"finish":"stop","time":{"created":1790091121000,"completed":1790091130000}}"#, at: 1_790_091_130)
         suite.expect(answer.contains(.turnEnded(at(1_790_091_130), completed: true, duration: 10))
-                        && events == [.finished(provider: .opencode, duration: 10, cost: 0.01, tokens: 110, project: "")],
+                        && events == [.finished(provider: .opencode, duration: 10, cost: 0.01, tokens: 110, project: "", file: "db#s_x")],
                      "the new task's notice counts from its own prompt and only its own cost")
 
         // OpenCode's own request right after a step is no new task.
@@ -2209,7 +2211,7 @@ enum NotchAgentTests {
                         && reply.contains(.turnEnded(at(1_790_093_110), completed: true, duration: 10))
                         && events.count == 2
                         && events.last == AgentUsageEvent.finished(provider: .opencode, duration: 10, cost: 0.01,
-                                                                   tokens: 110, project: "app")
+                                                                   tokens: 110, project: "app", file: "db#s_d")
                         && store.records.filter { $0.session == "s_d" }.count == 2,
                      "a later prompt in a session let go opens its own turn, which counts only its own reply")
 
@@ -2410,7 +2412,7 @@ enum NotchAgentTests {
         let endedAt = start.addingTimeInterval(1300)
         let ended = quiet.apply([.turnEnded(endedAt, completed: true, duration: nil)], file: waitingLog, provider: .codex,
                                 tracksTurns: true, modified: endedAt, now: endedAt)
-        let whole = AgentUsageEvent.finished(provider: .codex, duration: 1300, cost: 0.5, tokens: tokens.total, project: "app")
+        let whole = AgentUsageEvent.finished(provider: .codex, duration: 1300, cost: 0.5, tokens: tokens.total, project: "app", file: waitingLog)
         suite.expect(ended == [whole] && quiet.live.isEmpty, "a turn that waited finishes as the whole turn, with what it spent")
         quiet.apply([.turnBegan(endedAt)], file: waitingLog, provider: .codex, tracksTurns: true, modified: endedAt)
         quiet.closeIdleTurns(now: endedAt.addingTimeInterval(1200), after: NotchAgentSupport.idleTurn)
@@ -2466,6 +2468,25 @@ enum NotchAgentTests {
         suite.expect(NotchAgentReadout.elapsed.advancesWithClock && NotchAgentReadout.limit.advancesWithClock
                         && !NotchAgentReadout.tokens.advancesWithClock && !NotchAgentReadout.cost.advancesWithClock,
                      "only elapsed and expiring-limit readouts require clock-driven updates")
+        for provider in AgentProvider.allCases {
+            for focus in NotchAgentLimitFocus.allCases {
+                let empty = AgentUsageSnapshot()
+                let sample = NotchAgentSupport.stripSampleSnapshot(empty, provider: provider, focus: focus, now: now)
+                let used = focus == .session ? 0.32 : 0.57
+                suite.expect(NotchAgentSupport.stripReading(sample, readout: .limit, display: .used, focus: focus, now: now)
+                                == AgentFormat.percent(used),
+                             "\(provider.rawValue) settings preview illustrates the selected \(focus.rawValue) limit without account data")
+                suite.expect(NotchAgentSupport.stripReading(sample, readout: .limit, display: .remaining, focus: focus, now: now)
+                                == AgentFormat.percent(1 - used),
+                             "settings limit preview respects remaining versus used")
+                suite.expect(empty.live.isEmpty && empty.limits.isEmpty,
+                             "preview examples never populate the real usage snapshot")
+                suite.expect(NotchAgentSupport.stripReading(sample, readout: .elapsed, display: .remaining, now: now) == "12:34"
+                                && NotchAgentSupport.stripReading(sample, readout: .cost, display: .remaining, now: now) == AgentFormat.cost(4.56)
+                                && NotchAgentSupport.stripReading(sample, readout: .tokens, display: .remaining, now: now) == AgentFormat.tokens(20_000),
+                             "settings preview still illustrates time, cost and written tokens")
+            }
+        }
         let short = snapshot([session(.claude, startedAgo: 754)])
         let long = snapshot([session(.claude, startedAgo: 3723), session(.codex, startedAgo: 60)])
         suite.expect(NotchAgentSupport.stripReading(short, readout: .elapsed, display: .remaining, now: now) == "12:34"
@@ -2492,6 +2513,13 @@ enum NotchAgentTests {
                         && NotchAgentSupport.stripReading(limited, readout: .limit, display: .used, now: now) == AgentFormat.percent(0.79)
                         && NotchAgentSupport.stripReading(short, readout: .limit, display: .remaining, now: now) == "12:34",
                      "a limit reads as left or used, and falls back to the time while none is known")
+        suite.expect(NotchAgentSupport.limitShare(window, display: .remaining, text: .enUS)
+                        == "\(AgentFormat.percent(0.21)) left"
+                        && NotchAgentSupport.limitShare(window, display: .used, text: .enUS)
+                            == "\(AgentFormat.percent(0.79)) used",
+                     "a limit on the card says whether its share is left or used")
+        suite.expect(NotchAgentSupport.stripSampleSnapshot(limited, provider: .codex, focus: .weekly, now: now) == limited,
+                     "settings preview preserves an active provider's real allowance")
         let both = AgentLimits(provider: .claude, windows: [
             AgentLimitWindow(id: "s", kind: .session, minutes: 300, scope: nil, usedPercent: 22,
                              resetsAt: now.addingTimeInterval(3_600)),
@@ -3118,10 +3146,10 @@ enum NotchAgentTests {
                         && NotchCompactActivity.agents.module == .agents,
                      "a working agent outranks music but not a download")
 
-        defaults.set("trend,unknown,trend,spend", forKey: DefaultsKey.notchAgentsCardOrder)
-        defaults.set("activity,projects", forKey: DefaultsKey.notchAgentsHiddenCards)
-        suite.expect(NotchAgentSupport.cards(in: defaults) == [.trend, .spend, .limits, .live, .models, .resets],
-                     "the saved order ignores unknown and repeated cards and appends new ones")
+        defaults.set("trend,unknown,sessions,trend,live,spend", forKey: DefaultsKey.notchAgentsCardOrder)
+        defaults.set("activity,projects,live", forKey: DefaultsKey.notchAgentsHiddenCards)
+        suite.expect(NotchAgentSupport.cards(in: defaults) == [.trend, .spend, .limits, .models, .resets],
+                     "the saved order ignores unknown, repeated and retired cards and appends new ones")
         defaults.set(false, forKey: DefaultsKey.notchAgentsCodex)
         suite.expect(NotchAgentSupport.providers(in: defaults) == [.claude, .opencode, .copilot], "an agent can be left out")
         defaults.set(false, forKey: DefaultsKey.notchAgentsOpenCode)
@@ -3182,6 +3210,11 @@ enum NotchAgentTests {
                         == NotchAgentSupport.cardHeight + NotchAgentSupport.spacing + NotchAgentSupport.chartHeight
                         && NotchAgentSupport.contentHeight([]) == 0,
                      "the page is as tall as its rows")
+        suite.expect(NotchAgentSupport.pageHeight([[limits, codex], [trend]])
+                        == NotchAgentSupport.contentHeight([[limits, codex], [trend]])
+                        && NotchAgentSupport.pageHeight([[limits]]) == NotchAgentSupport.liveHeight
+                        && NotchAgentSupport.pageHeight([]) == NotchAgentSupport.liveHeight,
+                     "the Live tab keeps its room when the Statistics tab has few cards or none")
         let geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 1512, height: 982), safeAreaTop: 32,
                                      cameraWidth: 185, layout: .spacious, compactSideRoom: 200)
         suite.expect(geometry.expandedSize(module: .agents, agentsHeight: 96).height

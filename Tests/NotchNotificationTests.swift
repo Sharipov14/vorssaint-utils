@@ -216,6 +216,13 @@ enum NotchNotificationTests {
                        "the measured text width is the card width minus the island's insets")
                 expect(geometry.notificationPreviewSize(contentHeight: 5_000).height <= screen.height - 48,
                        "an overlong message cannot push the card past the display")
+                let request = geometry.agentRequestSize(contentHeight: 300)
+                expect(request.width == geometry.expandedWidth + 40
+                       && request.height == geometry.safeContentTop + 300 + NotchLayout.bottomInset
+                       && screen.contains(geometry.frame(for: request)),
+                       "Claude's question is a little wider than the island's pages and as tall as its card")
+                expect(geometry.agentRequestSize(contentHeight: 5_000).height <= screen.height - 48,
+                       "a long question cannot push its card past the display")
             }
         }
         let narrow = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 640, height: 480), safeAreaTop: 32, cameraWidth: 210)
@@ -223,5 +230,8 @@ enum NotchNotificationTests {
         expect(narrowSize.width == max(400, narrow.cameraWidth + 200) && narrowSize.width <= narrow.expandedWidth
                && narrow.screen.contains(narrow.frame(for: narrowSize)),
                "a wide camera keeps its clearance on either side of the card within a narrow display")
+        let narrowRequest = narrow.agentRequestSize(contentHeight: 300)
+        expect(narrowRequest.width <= narrow.screen.width - 24 && narrow.screen.contains(narrow.frame(for: narrowRequest)),
+               "a narrow display keeps the whole question card on screen")
     }
 }

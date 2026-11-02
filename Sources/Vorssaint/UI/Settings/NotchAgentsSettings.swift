@@ -8,7 +8,9 @@ import SwiftUI
 struct NotchAgentsSettingsControls: View {
     @ObservedObject private var l10n = L10n.shared
     @ObservedObject private var usage = AgentUsageService.shared
+    @ObservedObject private var approvals = AgentApprovalService.shared
     @AppStorage(DefaultsKey.notchAgentsClaude) private var claude = true
+    @AppStorage(DefaultsKey.notchAgentsClaudeProfile) private var claudeProfile = ""
     @AppStorage(DefaultsKey.notchAgentsCodex) private var codex = true
     @AppStorage(DefaultsKey.notchAgentsOpenCode) private var opencode = true
     @AppStorage(DefaultsKey.notchAgentsCopilot) private var copilot = true
@@ -27,6 +29,9 @@ struct NotchAgentsSettingsControls: View {
     @State private var dragging: NotchAgentCard?
     @State private var roots: [AgentProvider: Bool] = [:]
     @State private var claudeApp: URL?
+    /// The settings.json change waiting for the person's yes.
+    @State private var approvalChange: AgentApprovalService.Change?
+    @State private var approvalError: String?
     /// Read from the file while the section is off and the service is idle.
     @State private var claudeAppFileCheck: Date?
 
@@ -49,6 +54,7 @@ struct NotchAgentsSettingsControls: View {
             providerRow(.codex, isOn: $codex)
             providerRow(.opencode, isOn: $opencode)
             providerRow(.copilot, isOn: $copilot)
+            if claude { ClaudeAccountSettings() }
             if codex { CodexAccountsSettings() }
 
             Divider()
@@ -101,6 +107,7 @@ struct NotchAgentsSettingsControls: View {
                                       provider: claude ? .claude : codex ? .codex : opencode ? .opencode : .copilot)
                     .padding(.leading, settingsRowTextInset)
             }
+            if claude { approvalsRow }
 
             Divider()
             Text(text.alerts).font(.subheadline.weight(.medium))
@@ -141,17 +148,28 @@ struct NotchAgentsSettingsControls: View {
                     claudeLimitsStatus(now: context.date)
                 }
                 if usage.claudeAccountChecking { ProgressView().controlSize(.small) }
-                Text(text.claudeLimitsPrivacy).font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if claudeProfile.isEmpty {
+                    Text(text.claudeLimitsPrivacy).font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
         .toggleStyle(.switch)
         .onAppear {
             findRoots()
             // An agent turned off is not read at all, not even for its status.
-            if claude { findClaudeApp() }
+            if claude {
+                findClaudeApp()
+                approvals.refresh()
+            }
         }
         .onChange(of: claude) { _, on in if on { findClaudeApp() } }
+        .onChange(of: claudeProfile) { _, _ in
+            claudeAppFileCheck = nil
+            findRoots()
+            if claude { findClaudeApp() }
+            NotchService.shared.syncWithPreferences()
+        }
         // Cards and agents set the page's height, and the live reading the
         // closed island's width, which the island follows.
         .onChange(of: [cardOrder, hiddenCards, String(claude), String(codex), String(opencode), String(copilot),
@@ -179,6 +197,10 @@ struct NotchAgentsSettingsControls: View {
                       ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
                     .foregroundStyle(now.timeIntervalSince(account) < AgentClaudeAppUsage.freshness ? .green : .orange)
                 explained(failure) { Text("Claude Code · " + text.updated(relative(account, now: now))) }
+                Spacer(minLength: 0)
+            } else if !claudeProfile.isEmpty {
+                Image(systemName: "info.circle.fill").foregroundStyle(.secondary)
+                Text(failure ?? FeatureStrings.claudeAccount(l10n.language).noLimits)
                 Spacer(minLength: 0)
             } else if let checked, now.timeIntervalSince(checked) < AgentClaudeAppUsage.freshness {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
@@ -222,10 +244,11 @@ struct NotchAgentsSettingsControls: View {
     /// The app and the file are looked up when the page opens, off the main
     /// thread for the file, never on every draw.
     private func findClaudeApp() {
+        guard claudeProfile.isEmpty else { claudeApp = nil; claudeAppFileCheck = nil; return }
         claudeApp = NSWorkspace.shared.urlForApplication(withBundleIdentifier: AgentClaudeAppUsage.bundleIdentifier)
         DispatchQueue.global(qos: .utility).async {
             let checked = AgentClaudeAppUsage.lastCheck()
-            DispatchQueue.main.async { claudeAppFileCheck = checked }
+            DispatchQueue.main.async { if claudeProfile.isEmpty { claudeAppFileCheck = checked } }
         }
     }
 
@@ -251,8 +274,52 @@ struct NotchAgentsSettingsControls: View {
 
     /// Where the logs live is checked when the page opens, not on every draw.
     private func findRoots() {
-        let found = AgentLogRoot.all().filter(\.exists).map(\.provider)
+        let found = AgentLogRoot.all(claudeProfile: ClaudeAccountProfile(directory: claudeProfile)).filter(\.exists).map(\.provider)
         roots = Dictionary(uniqueKeysWithValues: AgentProvider.allCases.map { ($0, found.contains($0)) })
+    }
+
+    /// Claude's settings change only after the person has seen what is added.
+    private var approvalsRow: some View {
+        SettingsRow(symbol: "hand.raised", title: text.approvalsTitle, caption: text.approvalsCaption) {
+            Toggle(text.approvalsTitle, isOn: Binding(get: { approvals.installed }, set: setApprovals))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .disabled(approvals.socketPath == nil)
+        }
+        .confirmationDialog(text.approvalsConfirmTitle,
+                            isPresented: Binding(get: { approvalChange != nil }, set: { if !$0 { approvalChange = nil } }),
+                            titleVisibility: .visible) {
+            Button(text.approvalsConfirm) {
+                if let change = approvalChange { apply(change) }
+            }
+            Button(FeatureStrings.clipboard(l10n.language).cancel, role: .cancel) { approvalChange = nil }
+        } message: {
+            Text(text.approvalsConfirmMessage(approvalChange?.command ?? ""))
+        }
+        .alert(approvalError ?? "", isPresented: Binding(get: { approvalError != nil }, set: { if !$0 { approvalError = nil } })) {}
+    }
+
+    /// Turning it on asks first; turning it off takes out only this app's hook.
+    private func setApprovals(_ on: Bool) {
+        do {
+            let change = try approvals.change(installing: on)
+            if on { approvalChange = change } else { try approvals.apply(change) }
+        } catch {
+            approvalError = approvalMessage(error)
+        }
+    }
+
+    private func apply(_ change: AgentApprovalService.Change) {
+        approvalChange = nil
+        do { try approvals.apply(change) } catch { approvalError = approvalMessage(error) }
+    }
+
+    private func approvalMessage(_ error: Error) -> String {
+        switch error as? AgentApprovalService.Failure {
+        case .unreadable: return text.approvalsUnreadable
+        case .changed: return text.approvalsChanged
+        default: return text.approvalsWriteFailed
+        }
     }
 
     private func switchRow(_ symbol: String, _ title: String, isOn: Binding<Bool>) -> some View {
@@ -316,13 +383,7 @@ private struct NotchAgentStripSample: View {
     }
 
     private func reading(at now: Date) -> String {
-        var snapshot = usage.snapshot
-        if snapshot.live.isEmpty {
-            snapshot.live = [AgentLiveSession(id: "example", provider: provider, started: now.addingTimeInterval(-754),
-                                              lastActivity: now, model: "", project: "",
-                                              tokens: AgentTokens(input: 1_180_000, cacheWrite: 0, cacheRead: 0, output: 20_000),
-                                              cost: 4.56)]
-        }
+        let snapshot = NotchAgentSupport.stripSampleSnapshot(usage.snapshot, provider: provider, focus: focus, now: now)
         return NotchAgentSupport.stripReading(snapshot, readout: readout, display: display, focus: focus, now: now)
     }
 }
