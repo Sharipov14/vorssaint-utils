@@ -384,6 +384,53 @@ enum AgentSessionsSupport {
         ]
     }
 
+    // MARK: Showing
+
+    /// A script that puts the Terminal or iTerm2 tab on `tty` (`ttys003`) in
+    /// front of its window and the window in front of the app's; nil for any
+    /// other app, which can only be brought forward whole.
+    static func focusScript(bundleID: String?, tty: String) -> String? {
+        let number = tty.dropFirst(4)
+        guard tty.hasPrefix("ttys"), !number.isEmpty, number.allSatisfy({ $0.isASCII && $0.isNumber }) else { return nil }
+        let device = AppleScriptRunner.literal("/dev/" + tty)
+        switch bundleID {
+        case "com.apple.Terminal":
+            return """
+                tell application id "com.apple.Terminal"
+                    repeat with w in windows
+                        repeat with t in tabs of w
+                            if tty of t is \(device) then
+                                set miniaturized of w to false
+                                set selected tab of w to t
+                                set index of w to 1
+                                return
+                            end if
+                        end repeat
+                    end repeat
+                end tell
+                """
+        case "com.googlecode.iterm2":
+            return """
+                tell application id "com.googlecode.iterm2"
+                    repeat with w in windows
+                        repeat with t in tabs of w
+                            repeat with s in sessions of t
+                                if tty of s is \(device) then
+                                    select w
+                                    tell t to select
+                                    tell s to select
+                                    return
+                                end if
+                            end repeat
+                        end repeat
+                    end repeat
+                end tell
+                """
+        default:
+            return nil
+        }
+    }
+
     // MARK: Orphans
 
     static func ports(from entries: [PortManagerEntry]) -> [AgentPort] {

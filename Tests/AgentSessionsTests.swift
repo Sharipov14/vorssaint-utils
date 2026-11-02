@@ -99,6 +99,16 @@ enum AgentSessionsTests {
                      "ps rows keep the arguments whole, spaces included")
         suite.expect(AgentSessionsSupport.mayBeAgent("node /x/CODEX.js") && !AgentSessionsSupport.mayBeAgent("/usr/sbin/cfprefsd"),
                      "only processes naming an agent are asked about")
+
+        let terminal = AgentSessionsSupport.focusScript(bundleID: "com.apple.Terminal", tty: "ttys003")
+        let iTerm = AgentSessionsSupport.focusScript(bundleID: "com.googlecode.iterm2", tty: "ttys12")
+        suite.expect(terminal?.contains("tty of t is \"/dev/ttys003\"") == true && iTerm?.contains("tty of s is \"/dev/ttys12\"") == true,
+                     "Terminal and iTerm2 are asked for the tab on the session's own terminal")
+        suite.expect(AgentSessionsSupport.focusScript(bundleID: "com.microsoft.VSCode", tty: "ttys003") == nil
+                        && ["??", "ttys", "ttys1\"", "ttys+1", "console", "ttys٣"].allSatisfy {
+                            AgentSessionsSupport.focusScript(bundleID: "com.apple.Terminal", tty: $0) == nil
+                        },
+                     "another app, or no terminal, gets no script")
     }
 
     private static func tree(_ suite: TestSuite) {

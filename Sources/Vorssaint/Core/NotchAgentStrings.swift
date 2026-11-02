@@ -110,6 +110,7 @@ struct NotchAgentStrings {
     let orphansHint: String
     let closeAll: String
     let endSessionFormat: String
+    let showInFormat: String
     let thinking: String
     let done: String
     let turnFailed: String
@@ -136,6 +137,7 @@ struct NotchAgentStrings {
     func pricesFrom(_ day: String) -> String { String(format: pricesFromFormat, day) }
     func resetsExpiry(_ when: String) -> String { String(format: resetsExpiryFormat, when) }
     func endSession(_ name: String) -> String { String(format: endSessionFormat, name) }
+    func showIn(_ app: String) -> String { String(format: showInFormat, app) }
 
     /// The line under a session saying what it does now; nil while its log is unknown.
     func activity(of session: AgentSession) -> String? {
@@ -345,6 +347,7 @@ extension NotchAgentStrings {
         orphansHint: "Left listening after their session ended",
         closeAll: "Close all",
         endSessionFormat: "End session %@",
+        showInFormat: "Show in %@",
         thinking: "Thinking",
         done: "Done",
         turnFailed: "Failed",
@@ -464,6 +467,7 @@ extension NotchAgentStrings {
         orphansHint: "Залишились відкритими після завершення сесії",
         closeAll: "Закрити всі",
         endSessionFormat: "Завершити сесію %@",
+        showInFormat: "Показати в %@",
         thinking: "Думає",
         done: "Готово",
         turnFailed: "Помилка",
@@ -583,6 +587,7 @@ extension NotchAgentStrings {
         orphansHint: "Continuam abertas após o fim da sessão",
         closeAll: "Fechar todas",
         endSessionFormat: "Encerrar sessão %@",
+        showInFormat: "Mostrar em %@",
         thinking: "Pensando",
         done: "Pronto",
         turnFailed: "Falhou",
@@ -702,6 +707,7 @@ extension NotchAgentStrings {
         orphansHint: "Siguen abiertos tras terminar su sesión",
         closeAll: "Cerrar todos",
         endSessionFormat: "Terminar sesión %@",
+        showInFormat: "Mostrar en %@",
         thinking: "Pensando",
         done: "Listo",
         turnFailed: "Error",
@@ -821,6 +827,7 @@ extension NotchAgentStrings {
         orphansHint: "Zostali otvorené po skončení relácie",
         closeAll: "Zavrieť všetky",
         endSessionFormat: "Ukončiť reláciu %@",
+        showInFormat: "Zobraziť v %@",
         thinking: "Premýšľa",
         done: "Hotovo",
         turnFailed: "Chyba",
@@ -940,6 +947,7 @@ extension NotchAgentStrings {
         orphansHint: "Nach dem Ende ihrer Sitzung noch offen",
         closeAll: "Alle schließen",
         endSessionFormat: "Sitzung %@ beenden",
+        showInFormat: "In %@ zeigen",
         thinking: "Denkt nach",
         done: "Fertig",
         turnFailed: "Fehler",
@@ -1059,6 +1067,7 @@ extension NotchAgentStrings {
         orphansHint: "Toujours ouverts après la fin de leur session",
         closeAll: "Tout fermer",
         endSessionFormat: "Terminer la session %@",
+        showInFormat: "Afficher dans %@",
         thinking: "Réfléchit",
         done: "Terminé",
         turnFailed: "Échec",
@@ -1178,6 +1187,7 @@ extension NotchAgentStrings {
         orphansHint: "Ancora aperte dopo la fine della sessione",
         closeAll: "Chiudi tutte",
         endSessionFormat: "Termina sessione %@",
+        showInFormat: "Mostra in %@",
         thinking: "Sta pensando",
         done: "Fatto",
         turnFailed: "Errore",
@@ -1297,6 +1307,7 @@ extension NotchAgentStrings {
         orphansHint: "Остались открытыми после завершения сессии",
         closeAll: "Закрыть все",
         endSessionFormat: "Завершить сессию %@",
+        showInFormat: "Показать в %@",
         thinking: "Думает",
         done: "Готово",
         turnFailed: "Ошибка",
@@ -1416,6 +1427,7 @@ extension NotchAgentStrings {
         orphansHint: "Oturumları bittikten sonra açık kaldı",
         closeAll: "Tümünü kapat",
         endSessionFormat: "%@ oturumunu sonlandır",
+        showInFormat: "%@ içinde göster",
         thinking: "Düşünüyor",
         done: "Bitti",
         turnFailed: "Hata",
@@ -1535,6 +1547,7 @@ extension NotchAgentStrings {
         orphansHint: "セッション終了後も開いたままです",
         closeAll: "すべて閉じる",
         endSessionFormat: "セッション %@ を終了",
+        showInFormat: "%@ で表示",
         thinking: "考え中",
         done: "完了",
         turnFailed: "エラー",
@@ -1654,6 +1667,7 @@ extension NotchAgentStrings {
         orphansHint: "세션이 끝난 후에도 열려 있음",
         closeAll: "모두 닫기",
         endSessionFormat: "%@ 세션 종료",
+        showInFormat: "%@에서 보기",
         thinking: "생각 중",
         done: "완료",
         turnFailed: "오류",
@@ -1773,6 +1787,7 @@ extension NotchAgentStrings {
         orphansHint: "会话结束后仍在监听",
         closeAll: "全部关闭",
         endSessionFormat: "结束会话 %@",
+        showInFormat: "在 %@ 中显示",
         thinking: "思考中",
         done: "完成",
         turnFailed: "出错",
@@ -1892,6 +1907,7 @@ extension NotchAgentStrings {
         orphansHint: "工作階段結束後仍在監聽",
         closeAll: "全部關閉",
         endSessionFormat: "結束工作階段 %@",
+        showInFormat: "在 %@ 中顯示",
         thinking: "思考中",
         done: "完成",
         turnFailed: "錯誤",
@@ -2011,6 +2027,7 @@ extension NotchAgentStrings {
         orphansHint: "工作階段結束後仍在監聽",
         closeAll: "全部關閉",
         endSessionFormat: "結束工作階段 %@",
+        showInFormat: "在 %@ 中顯示",
         thinking: "思考中",
         done: "完成",
         turnFailed: "錯誤",

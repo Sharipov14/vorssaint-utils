@@ -206,15 +206,28 @@ private struct NotchAgentSessionRow: View {
         return session.folder.isEmpty ? session.kind.displayName : session.folder
     }
 
+    /// The app it runs in; a background session has none to show.
+    private var showLabel: String? {
+        session.host.flatMap { preview || session.isSubagent ? nil : text.showIn($0.name) }
+    }
+
     private func end() { AgentSessionsService.shared.kill(session) }
+
+    private func show() {
+        NotchService.shared.collapse()
+        AgentSessionsService.shared.show(session)
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 4) {
             if session.isSubagent {
                 content.accessibilityElement(children: .combine)
             } else {
-                // VoiceOver can end a session without revealing the ×.
-                if canEnd { pick.accessibilityAction(named: endLabel, end) } else { pick }
+                // VoiceOver reaches both without revealing the buttons.
+                pick.accessibilityActions {
+                    if let showLabel { Button(showLabel, action: show) }
+                    if canEnd { Button(endLabel, action: end) }
+                }
             }
             if canEnd {
                 Button(action: end) {
@@ -279,31 +292,42 @@ private struct NotchAgentSessionRow: View {
         .help(session.waitingFor ?? activity)
     }
 
-    /// The prompt the turn answers, the latest reply and the files changed, for a picked session.
+    /// Where it runs, the prompt the turn answers, the latest reply and the files changed, for a picked session.
     @ViewBuilder private var details: some View {
-        if let activity = session.activity, activity.prompt != nil || activity.reply != nil || !activity.files.isEmpty {
+        let activity = session.activity
+        if showLabel != nil || activity?.prompt != nil || activity?.reply != nil || activity?.files.isEmpty == false {
             VStack(alignment: .leading, spacing: 2) {
-                if let prompt = activity.prompt { detail("person.fill", prompt) }
-                if let reply = activity.reply { detail("text.bubble", reply) }
-                ForEach(activity.files) { file in
-                    Button { open(file) } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "doc.text").font(.system(size: 8)).foregroundStyle(.tertiary)
-                            Text(file.name).font(.system(size: 9.5, weight: .medium)).lineLimit(1).truncationMode(.middle)
-                            Spacer(minLength: 4)
-                            NotchAgentDiffCounts(added: file.added, removed: file.removed)
-                            Image(systemName: "chevron.right").font(.system(size: 7, weight: .semibold)).foregroundStyle(.tertiary)
-                        }
-                        .frame(height: 15)
-                        .contentShape(Rectangle())
+                if let showLabel {
+                    link("arrow.up.forward.app", showLabel, action: show) { EmptyView() }
+                }
+                if let prompt = activity?.prompt { detail("person.fill", prompt) }
+                if let reply = activity?.reply { detail("text.bubble", reply) }
+                ForEach(activity?.files ?? []) { file in
+                    link("doc.text", file.name, action: { open(file) }) {
+                        NotchAgentDiffCounts(added: file.added, removed: file.removed)
+                        Image(systemName: "chevron.right").font(.system(size: 7, weight: .semibold)).foregroundStyle(.tertiary)
                     }
-                    .buttonStyle(NotchButtonStyle(cornerRadius: 5, lifts: false))
                     .help(file.path)
                 }
             }
             .padding(.leading, Self.indent)
             .padding(.vertical, 2)
         }
+    }
+
+    private func link(_ symbol: String, _ title: String, action: @escaping () -> Void,
+                      @ViewBuilder trailing: () -> some View) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: symbol).font(.system(size: 8)).foregroundStyle(.tertiary)
+                Text(title).font(.system(size: 9.5, weight: .medium)).lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 4)
+                trailing()
+            }
+            .frame(height: 15)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(NotchButtonStyle(cornerRadius: 5, lifts: false))
     }
 
     private func detail(_ symbol: String, _ value: String) -> some View {

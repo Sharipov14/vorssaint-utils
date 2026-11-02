@@ -120,6 +120,34 @@ final class AgentSessionsService: ObservableObject {
         }
     }
 
+    // MARK: Showing
+
+    /// Brings the session's app forward, in Terminal and iTerm2 on its own tab.
+    /// The tab is picked by AppleScript off the main thread, as it waits on the
+    /// app; a declined Automation or a tab that is gone still shows the app.
+    func show(_ session: AgentSession) {
+        guard let host = session.host, let app = NSRunningApplication(processIdentifier: host.pid) else { return }
+        // A pid reused since sits on someone else's terminal.
+        let script = KillProcessService.startTime(for: session.pid) == session.identity
+            ? Self.terminal(of: session.pid).flatMap { AgentSessionsSupport.focusScript(bundleID: app.bundleIdentifier, tty: $0) }
+            : nil
+        guard let script else {
+            Self.activate(app)
+            return
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+            AppleScriptRunner.run(script)
+            DispatchQueue.main.async { Self.activate(app) }
+        }
+    }
+
+    private static func activate(_ app: NSRunningApplication) {
+        ActivationHandoff.yield(to: app)
+        if !app.activate(from: NSRunningApplication.current, options: []) {
+            app.activate(options: [])
+        }
+    }
+
     private func rescan() {
         guard timer != nil else { return }
         let epoch = epoch
@@ -213,6 +241,15 @@ final class AgentSessionsService: ObservableObject {
         return withUnsafePointer(to: &info.pbi_comm) {
             $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXCOMLEN) + 1) { String(cString: $0) }
         }
+    }
+
+    /// The terminal the process reads, as `ttys003`; "??" or nil without one.
+    private static func terminal(of pid: pid_t) -> String? {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size,
+              let name = devname(dev_t(bitPattern: info.e_tdev), S_IFCHR) else { return nil }
+        return String(cString: name)
     }
 
     private static func workingDirectory(of pid: pid_t) -> String? {
