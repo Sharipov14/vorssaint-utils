@@ -16,6 +16,12 @@ private let sessionMemory: ByteCountFormatter = {
     return formatter
 }()
 
+/// A changed file of a session, opened in full on the Live tab.
+struct AgentDiffTarget: Equatable {
+    let session: String
+    let path: String
+}
+
 /// The Live tab: every agent running, and the ports its processes left open.
 struct NotchAgentSessionsList: View {
     let size: CGSize
@@ -26,6 +32,8 @@ struct NotchAgentSessionsList: View {
     let text: NotchAgentStrings
     /// Settings draws it with example rows and scans for nothing.
     let preview: Bool
+    /// The file shown in full instead of the list; its way back is in the island's top row.
+    @Binding var diff: AgentDiffTarget?
     @ObservedObject private var service = AgentSessionsService.shared
     @ObservedObject private var usage = AgentUsageService.shared
     @Environment(\.locale) private var locale
@@ -37,8 +45,13 @@ struct NotchAgentSessionsList: View {
         let orphans = preview ? [] : service.orphans
         // The usage reader names a turn after its log, as the sessions do.
         let turns = Dictionary(usage.snapshot.live.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let opened = diff.flatMap { target in
+            sessions.first { $0.id == target.session }?.activity?.files.first { $0.path == target.path }
+        }
         Group {
-            if !preview && !service.loaded {
+            if let opened {
+                NotchAgentDiffView(file: opened)
+            } else if !preview && !service.loaded {
                 ProgressView().controlSize(.small).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if sessions.isEmpty && orphans.isEmpty {
                 if recent.isEmpty {
@@ -53,7 +66,9 @@ struct NotchAgentSessionsList: View {
                             NotchAgentCardChrome {
                                 TimelineView(.periodic(from: .now, by: 1)) { context in
                                     NotchAgentSessionRows(sessions: sessions, turns: turns, now: context.date, text: text,
-                                                          preview: preview, selected: $selected)
+                                                          preview: preview, selected: $selected) { session, file in
+                                        diff = AgentDiffTarget(session: session.id, path: file.path)
+                                    }
                                 }
                             }
                         }
@@ -64,6 +79,8 @@ struct NotchAgentSessionsList: View {
             }
         }
         .frame(width: size.width, height: size.height, alignment: .top)
+        // A file whose session ended has nothing left to show.
+        .onChange(of: opened == nil) { _, gone in if gone { diff = nil } }
     }
 
     /// No agent runs: when each last worked.
@@ -134,6 +151,7 @@ private struct NotchAgentSessionRows: View {
     let text: NotchAgentStrings
     let preview: Bool
     @Binding var selected: String?
+    let open: (AgentSession, AgentFileDiff) -> Void
     @ObservedObject private var features = FeatureRuntime.shared
 
     /// Ending a session needs the Kill Process feature, as freeing a port does;
@@ -149,7 +167,8 @@ private struct NotchAgentSessionRows: View {
             ForEach(sessions) { session in
                 NotchAgentSessionRow(session: session, turn: session.log.flatMap { turns[$0] }, now: now, text: text,
                                      preview: preview,
-                                     canEnd: canEnd && !session.isSubagent, selected: selected == session.id) {
+                                     canEnd: canEnd && !session.isSubagent, selected: selected == session.id,
+                                     open: { open(session, $0) }) {
                     selected = selected == session.id ? nil : session.id
                 }
             }
@@ -169,6 +188,7 @@ private struct NotchAgentSessionRow: View {
     let preview: Bool
     let canEnd: Bool
     let selected: Bool
+    let open: (AgentFileDiff) -> Void
     let toggle: () -> Void
 
     private var statusText: String {
@@ -241,6 +261,9 @@ private struct NotchAgentSessionRow: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            if let files = session.activity?.files, !files.isEmpty {
+                NotchAgentDiffCounts(added: files.reduce(0) { $0 + $1.added }, removed: files.reduce(0) { $0 + $1.removed })
+            }
             if let turn {
                 Text([AgentPricing.displayName(turn.model), turn.cost > 0 ? AgentFormat.cost(turn.cost) : ""]
                         .filter { !$0.isEmpty }.joined(separator: " · "))
@@ -256,12 +279,27 @@ private struct NotchAgentSessionRow: View {
         .help(session.waitingFor ?? activity)
     }
 
-    /// The prompt the turn answers and the latest reply, for a picked session.
+    /// The prompt the turn answers, the latest reply and the files changed, for a picked session.
     @ViewBuilder private var details: some View {
-        if let activity = session.activity, activity.prompt != nil || activity.reply != nil {
+        if let activity = session.activity, activity.prompt != nil || activity.reply != nil || !activity.files.isEmpty {
             VStack(alignment: .leading, spacing: 2) {
                 if let prompt = activity.prompt { detail("person.fill", prompt) }
                 if let reply = activity.reply { detail("text.bubble", reply) }
+                ForEach(activity.files) { file in
+                    Button { open(file) } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "doc.text").font(.system(size: 8)).foregroundStyle(.tertiary)
+                            Text(file.name).font(.system(size: 9.5, weight: .medium)).lineLimit(1).truncationMode(.middle)
+                            Spacer(minLength: 4)
+                            NotchAgentDiffCounts(added: file.added, removed: file.removed)
+                            Image(systemName: "chevron.right").font(.system(size: 7, weight: .semibold)).foregroundStyle(.tertiary)
+                        }
+                        .frame(height: 15)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(NotchButtonStyle(cornerRadius: 5, lifts: false))
+                    .help(file.path)
+                }
             }
             .padding(.leading, Self.indent)
             .padding(.vertical, 2)
@@ -369,5 +407,78 @@ private struct NotchAgentSessionRow: View {
         }
         .frame(width: 8, height: 8)
         .help(statusText)
+    }
+}
+
+/// Lines added and removed, in the colors a diff shows them in.
+struct NotchAgentDiffCounts: View {
+    let added: Int
+    let removed: Int
+
+    var body: some View {
+        HStack(spacing: 3) {
+            if added > 0 { Text("+\(added)").foregroundStyle(.green) }
+            if removed > 0 { Text("\u{2212}\(removed)").foregroundStyle(.red) }
+        }
+        .font(.system(size: 9.5, weight: .medium))
+        .monospacedDigit()
+        .lineLimit(1)
+        .fixedSize()
+    }
+}
+
+/// A changed file's lines, hunk after hunk, as the agent made them.
+struct NotchAgentDiffView: View {
+    let file: AgentFileDiff
+
+    var body: some View {
+        NotchAgentCardChrome {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Text(file.name)
+                        .font(.system(size: 11, weight: .semibold))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(file.path)
+                    Spacer(minLength: 4)
+                    NotchAgentDiffCounts(added: file.added, removed: file.removed)
+                }
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(file.hunks.indices, id: \.self) { index in
+                            if index > 0 {
+                                Text("\u{22EF}").font(.system(size: 9)).foregroundStyle(.tertiary).padding(.vertical, 2)
+                            }
+                            ForEach(file.hunks[index].indices, id: \.self) { line(file.hunks[index][$0]) }
+                        }
+                        if file.truncated {
+                            Text("\u{2026}").font(.system(size: 10)).foregroundStyle(.tertiary).padding(.top, 2)
+                        }
+                    }
+                }
+                .scrollIndicators(.automatic)
+            }
+        }
+    }
+
+    private func line(_ line: AgentDiffLine) -> some View {
+        let (marker, tint): (String, Color?) = switch line.kind {
+        case .added: ("+", .green)
+        case .removed: ("\u{2212}", .red)
+        case .context: (" ", nil)
+        }
+        return HStack(spacing: 4) {
+            Text(marker).foregroundStyle(tint ?? .secondary).frame(width: 8)
+            Text(line.text.isEmpty ? " " : line.text)
+                .foregroundStyle(tint == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.white.opacity(0.9)))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .font(.system(size: 10, design: .monospaced))
+        .padding(.horizontal, 3)
+        .background((tint ?? .clear).opacity(0.16))
+        .help(line.text)
+        .accessibilityElement(children: .combine)
     }
 }

@@ -10,6 +10,7 @@ enum AgentActivityTests {
         suite.run("agent activity: Copilot and OpenCode") { copilotAndOpenCode(suite) }
         suite.run("agent activity: steps and lines") { steps(suite) }
         suite.run("agent activity: which log") { links(suite) }
+        suite.run("agent activity: changed files") { changes(suite) }
         suite.run("agent activity: what the row says") { wording(suite) }
     }
 
@@ -224,5 +225,71 @@ enum AgentActivityTests {
             """#.utf8))
         suite.expect(file?.asking == true && file?.waitingFor == "approve Bash" && file?.working == nil,
                      "Claude's session file says when it waits on the person")
+    }
+
+    private static func changes(_ suite: TestSuite) {
+        typealias Line = AgentDiffLine
+        suite.expect(AgentActivitySupport.hunks(unified: ["--- a/x", "+++ b/x", "@@ -1,2 +1,2 @@", " keep", "--- rule", "+=== rule",
+                                                          "@@ -9 +9 @@", "-old", "+new", "\\ No newline at end of file"])
+                        == [[Line(kind: .context, text: "keep"), Line(kind: .removed, text: "-- rule"), Line(kind: .added, text: "=== rule")],
+                            [Line(kind: .removed, text: "old"), Line(kind: .added, text: "new")]],
+                     "headers count only before a hunk, so a removed line starting with dashes stays")
+
+        let patch = "*** Begin Patch\n*** Update File: src/a.ts\n@@ fn\n ctx\n-x\n+y\n*** Add File: src/b.ts\n+one\n+two\n"
+            + "*** Delete File: src/c.ts\n*** End Patch"
+        let changes = AgentActivitySupport.patchChanges(patch)
+        suite.expect(changes.map(\.path) == ["src/a.ts", "src/b.ts"]
+                        && changes[0].hunks == [[Line(kind: .context, text: "ctx"), Line(kind: .removed, text: "x"), Line(kind: .added, text: "y")]]
+                        && changes[1].hunks.joined().allSatisfy { $0.kind == .added },
+                     "a Codex patch gives each updated and added file its lines")
+
+        suite.expect(AgentActivitySupport.hunk(old: "a\nb\nc", new: "a\nB\nc")
+                        == [Line(kind: .context, text: "a"), Line(kind: .removed, text: "b"), Line(kind: .added, text: "B"),
+                            Line(kind: .context, text: "c")],
+                     "two versions of a text interleave what changed between what stayed")
+
+        var activity = AgentActivity()
+        AgentActivitySupport.applyClaude(claudeUser([["type": "tool_result", "tool_use_id": "t", "content": "ok"]],
+            extra: ["toolUseResult": ["filePath": "/x/View.swift",
+                                      "structuredPatch": [["oldStart": 1, "lines": [" a", "-b", "+c", "+d"]]]]]), to: &activity)
+        AgentActivitySupport.applyClaude(claudeUser([["type": "tool_result", "tool_use_id": "u", "content": "ok"]],
+            extra: ["toolUseResult": ["type": "create", "filePath": "/x/New.swift", "content": "one\ntwo",
+                                      "structuredPatch": [] as [Any]]]), to: &activity)
+        AgentActivitySupport.applyClaude(claudeUser([["type": "tool_result", "tool_use_id": "v", "content": "ok"]],
+            extra: ["toolUseResult": ["filePath": "/x/View.swift", "structuredPatch": [["lines": ["-e"]]]]]), to: &activity)
+        var shell = AgentActivity()
+        AgentActivitySupport.applyClaude(claudeUser([["type": "tool_result", "tool_use_id": "w", "content": ""]],
+            extra: ["toolUseResult": ["stdout": "", "bashEditDiff": ["files": [["filePath": "/x/sed.txt",
+                                                                                  "hunks": [["lines": ["-a", "+b"]]]]]]]]), to: &shell)
+        suite.expect(shell.files.first?.path == "/x/sed.txt" && shell.files.first?.added == 1,
+                     "what a shell command changed counts as the session's change")
+        suite.expect(activity.files.map(\.name) == ["View.swift", "New.swift"]
+                        && activity.files[0].added == 2 && activity.files[0].removed == 2 && activity.files[0].hunks.count == 2
+                        && activity.files[1].added == 2,
+                     "Claude's patches add up per file, a new file counts every line, and the latest file leads")
+        activity.began()
+        suite.expect(activity.files.count == 2, "a new turn keeps the session's changed files")
+
+        var big = AgentActivity()
+        big.changed("/x/huge.txt", hunks: [AgentActivitySupport.added(String(repeating: "l\n", count: AgentActivitySupport.diffLineLimit + 50))])
+        suite.expect(big.files[0].added == AgentActivitySupport.diffLineLimit + 51 && big.files[0].truncated
+                        && big.files[0].hunks.joined().count == AgentActivitySupport.diffLineLimit,
+                     "lines past the limit are counted but not kept")
+        for index in 0...AgentActivitySupport.fileLimit { big.changed("/x/\(index)", hunks: [[Line(kind: .added, text: "")]]) }
+        suite.expect(big.files.count == AgentActivitySupport.fileLimit && big.files.first?.path == "/x/\(AgentActivitySupport.fileLimit)",
+                     "only the latest files are kept")
+
+        var copilot = AgentActivity()
+        AgentActivitySupport.applyCopilot(["type": "assistant.message", "data": ["toolRequests": [
+            ["toolCallId": "e", "name": "str_replace_editor", "arguments": ["path": "/x/a.py", "old_str": "x = 1", "new_str": "x = 2"]]]]],
+            to: &copilot)
+        var openCode = AgentActivity()
+        AgentActivitySupport.applyOpenCode(part: ["type": "tool", "callID": "k", "tool": "edit",
+                                                  "state": ["status": "completed", "input": ["filePath": "/x/b.ts"],
+                                                            "metadata": ["diff": "Index: /x/b.ts\n--- /x/b.ts\n+++ /x/b.ts\n@@ -1 +1 @@\n-a\n+b\n"]]],
+                                           id: "p", role: "assistant", to: &openCode)
+        suite.expect(copilot.files.first?.added == 1 && copilot.files.first?.removed == 1
+                        && openCode.files.first?.path == "/x/b.ts" && openCode.files.first?.added == 1,
+                     "Copilot's edit arguments and OpenCode's diff become changed files")
     }
 }

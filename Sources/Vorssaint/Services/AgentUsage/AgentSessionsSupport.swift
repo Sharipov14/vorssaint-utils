@@ -369,7 +369,13 @@ enum AgentSessionsSupport {
         return [
             AgentSession(id: "1", kind: .claude, pid: 1, identity: start(14), cwd: "/Users/you/web-app", status: .working,
                          memory: 410 << 20, ports: [AgentPort(port: 3000, pid: 2, name: "node")], host: terminal,
-                         activity: AgentActivity(state: .running, step: AgentStep(verb: .edit, target: "App.swift"))),
+                         activity: AgentActivity(state: .running, step: AgentStep(verb: .edit, target: "App.swift"),
+                                                 files: [AgentFileDiff(path: "/Users/you/web-app/App.swift", added: 2, removed: 1, hunks: [[
+                                                     AgentDiffLine(kind: .context, text: "struct App {"),
+                                                     AgentDiffLine(kind: .removed, text: "    var dark = false"),
+                                                     AgentDiffLine(kind: .added, text: "    var dark = true"),
+                                                     AgentDiffLine(kind: .added, text: "    var toggle = true"),
+                                                 ]])])),
             AgentSession(id: "1.a", kind: .claude, pid: 0, identity: 0, depth: 1, title: "Explore", status: .working),
             AgentSession(id: "3", kind: .codex, pid: 3, identity: start(52), cwd: "/Users/you/api", status: .waiting,
                          memory: 230 << 20, host: terminal, activity: AgentActivity(state: .finished)),

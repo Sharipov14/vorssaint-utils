@@ -28,6 +28,8 @@ struct NotchAgentsView: View {
     @AppStorage(DefaultsKey.notchAgentsCopilot) private var copilot = true
     /// Nil until the person picks one, so each showing opens on the agents running.
     @State private var tab: NotchAgentTab?
+    /// A session's changed file, shown in full on the Live tab.
+    @State private var openDiff: AgentDiffTarget?
     /// Whether this view has asked the service to scan, which it must undo once.
     @State private var watching = false
 
@@ -77,14 +79,21 @@ struct NotchAgentsView: View {
     var body: some View {
         Group {
             if shownTab == .live {
-                NotchAgentSessionsList(size: size, providers: followed, recent: providers, text: text, preview: preview)
+                NotchAgentSessionsList(size: size, providers: followed, recent: providers, text: text, preview: preview,
+                                       diff: $openDiff)
             } else {
                 statistics
             }
         }
         .frame(width: size.width, height: size.height, alignment: .top)
         .environment(\.locale, l10n.language.formattingLocale())
-        .notchBand(leading: { tabs }, trailing: {
+        .notchBand(leading: {
+            if shownTab == .live, openDiff != nil {
+                NotchBandBackButton(title: text.liveTab) { openDiff = nil }
+            } else {
+                tabs
+            }
+        }, trailing: {
             if shownTab == .stats && showsPeriod { periodMenu }
         })
         .onAppear {
@@ -99,6 +108,7 @@ struct NotchAgentsView: View {
             accounts.pageDidDisappear()
             setWatching(false)
             tab = nil
+            openDiff = nil
         }
     }
 

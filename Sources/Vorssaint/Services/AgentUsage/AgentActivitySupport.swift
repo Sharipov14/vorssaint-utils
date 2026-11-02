@@ -16,8 +16,28 @@ struct AgentStep: Equatable {
     let target: String
 }
 
-/// What a session's log says it is doing. Prompts and replies are kept only
-/// in memory while the Live tab shows, cut to a line, and never written.
+struct AgentDiffLine: Equatable {
+    enum Kind: Equatable { case context, added, removed }
+    let kind: Kind
+    let text: String
+}
+
+/// A file a session changed, with as many of its lines as are kept.
+struct AgentFileDiff: Equatable, Identifiable {
+    let path: String
+    var added = 0
+    var removed = 0
+    /// In the order they were made.
+    var hunks: [[AgentDiffLine]] = []
+    /// Lines past the limit were counted, not kept.
+    var truncated = false
+
+    var id: String { path }
+    var name: String { (path as NSString).lastPathComponent }
+}
+
+/// What a session's log says it is doing. Prompts, replies and changed lines
+/// are kept only in memory while the Live tab shows, and never written.
 struct AgentActivity: Equatable {
     enum State: Equatable { case thinking, running, finished, failed }
 
@@ -28,6 +48,8 @@ struct AgentActivity: Equatable {
     var reply: String?
     /// Tool calls still waiting for their result, by call id.
     var pending: [String: AgentStep] = [:]
+    /// The files the session changed, the latest first; kept across turns.
+    var files: [AgentFileDiff] = []
 
     var inTurn: Bool { state == .thinking || state == .running }
 
@@ -62,6 +84,24 @@ struct AgentActivity: Equatable {
         if let text = AgentActivitySupport.line(text, limit: AgentActivitySupport.replyLimit) { reply = text }
     }
 
+    /// Adds a change to its file, which moves to the top of the list.
+    mutating func changed(_ path: String, hunks: [[AgentDiffLine]]) {
+        guard !path.isEmpty, !hunks.joined().isEmpty else { return }
+        var file = files.firstIndex { $0.path == path }.map { files.remove(at: $0) } ?? AgentFileDiff(path: path)
+        var kept = file.hunks.reduce(0) { $0 + $1.count }
+        for hunk in hunks where !hunk.isEmpty {
+            file.added += hunk.filter { $0.kind == .added }.count
+            file.removed += hunk.filter { $0.kind == .removed }.count
+            let room = max(0, AgentActivitySupport.diffLineLimit - kept)
+            if hunk.count > room { file.truncated = true }
+            guard room > 0 else { continue }
+            file.hunks.append(Array(hunk.prefix(room)))
+            kept += min(room, hunk.count)
+        }
+        files.insert(file, at: 0)
+        if files.count > AgentActivitySupport.fileLimit { files.removeLast(files.count - AgentActivitySupport.fileLimit) }
+    }
+
     mutating func ended(failed: Bool) {
         pending = [:]
         state = failed ? .failed : .finished
@@ -92,12 +132,16 @@ enum AgentActivitySupport {
     static let promptLimit = 140
     static let replyLimit = 200
     static let targetLimit = 80
-    /// Read from a log first seen; enough for the turn running now.
-    static let firstRead = 256 * 1024
+    /// Read from a log first seen: the turn running now and the changes before it.
+    // ponytail: the file list covers this much of a log and what is written
+    // while the tab shows; reading a whole transcript would cover the session.
+    static let firstRead = 1024 * 1024
     /// Read from a log in one tick at most; the rest waits for the next.
     static let tickRead = 1024 * 1024
     /// Codex runs these besides the person's own CLI sessions, in the same folders.
     static let codexSources: Set<String> = ["cli", "exec"]
+    static let fileLimit = 50
+    static let diffLineLimit = 600
 
     // MARK: Text
 
@@ -167,14 +211,105 @@ enum AgentActivitySupport {
         return ""
     }
 
-    /// The first file a Codex patch touches.
-    static func patchFile(_ patch: String) -> String {
-        for line in patch.split(separator: "\n") {
-            for prefix in ["*** Update File: ", "*** Add File: ", "*** Delete File: "] where line.hasPrefix(prefix) {
-                return (String(line.dropFirst(prefix.count)) as NSString).lastPathComponent
+    // MARK: Changes
+
+    /// The hunks of a unified diff, past any file headers before the first.
+    static func hunks(unified lines: [String]) -> [[AgentDiffLine]] {
+        var result: [[AgentDiffLine]] = []
+        var hunk: [AgentDiffLine] = []
+        var inHunk = false
+        for line in lines {
+            if line.hasPrefix("@@") {
+                if !hunk.isEmpty { result.append(hunk) }
+                hunk = []
+                inHunk = true
+                continue
+            }
+            // A removed line can itself start with dashes, so headers count only before a hunk.
+            if !inHunk && (line.hasPrefix("---") || line.hasPrefix("+++") || line.hasPrefix("Index:") || line.hasPrefix("===")) {
+                continue
+            }
+            if let parsed = diffLine(line) { hunk.append(parsed) }
+        }
+        if !hunk.isEmpty { result.append(hunk) }
+        return result
+    }
+
+    private static func diffLine(_ line: String) -> AgentDiffLine? {
+        switch line.first {
+        case "+": return AgentDiffLine(kind: .added, text: String(line.dropFirst()))
+        case "-": return AgentDiffLine(kind: .removed, text: String(line.dropFirst()))
+        case " ": return AgentDiffLine(kind: .context, text: String(line.dropFirst()))
+        case nil: return AgentDiffLine(kind: .context, text: "")
+        default: return nil
+        }
+    }
+
+    /// The files a Codex patch adds or updates, with its hunks; a deleted
+    /// file's lines are not in the patch.
+    static func patchChanges(_ patch: String) -> [(path: String, hunks: [[AgentDiffLine]])] {
+        var result: [(path: String, hunks: [[AgentDiffLine]])] = []
+        var path: String?
+        var hunks: [[AgentDiffLine]] = []
+        var hunk: [AgentDiffLine] = []
+        func close() {
+            if !hunk.isEmpty { hunks.append(hunk) }
+            hunk = []
+        }
+        func flush() {
+            close()
+            if let path, !hunks.isEmpty { result.append((path, hunks)) }
+            path = nil
+            hunks = []
+        }
+        for line in patch.components(separatedBy: "\n") {
+            if let file = ["*** Update File: ", "*** Add File: "].first(where: line.hasPrefix) {
+                flush()
+                path = String(line.dropFirst(file.count))
+            } else if line.hasPrefix("*** ") {
+                if line.hasPrefix("*** Delete File: ") || line == "*** End Patch" { flush() }
+            } else if line.hasPrefix("@@") {
+                close()
+            } else if path != nil, let parsed = diffLine(line) {
+                hunk.append(parsed)
             }
         }
-        return ""
+        flush()
+        return result
+    }
+
+    /// The lines between two versions of a text, unchanged ones kept as context.
+    static func hunk(old: String, new: String) -> [AgentDiffLine] {
+        let before = old.components(separatedBy: "\n"), after = new.components(separatedBy: "\n")
+        let difference = after.difference(from: before)
+        var removed = Set<Int>(), inserted = Set<Int>()
+        for change in difference {
+            switch change {
+            case .remove(let offset, _, _): removed.insert(offset)
+            case .insert(let offset, _, _): inserted.insert(offset)
+            }
+        }
+        var lines: [AgentDiffLine] = []
+        var i = 0, j = 0
+        while i < before.count || j < after.count {
+            if i < before.count, removed.contains(i) {
+                lines.append(AgentDiffLine(kind: .removed, text: before[i]))
+                i += 1
+            } else if j < after.count, inserted.contains(j) {
+                lines.append(AgentDiffLine(kind: .added, text: after[j]))
+                j += 1
+            } else {
+                if i < before.count { lines.append(AgentDiffLine(kind: .context, text: before[i])) }
+                i += 1
+                j += 1
+            }
+        }
+        return lines
+    }
+
+    /// A new file's lines, every one added.
+    static func added(_ content: String) -> [AgentDiffLine] {
+        content.components(separatedBy: "\n").map { AgentDiffLine(kind: .added, text: $0) }
     }
 
     // MARK: Logs
@@ -194,6 +329,22 @@ enum AgentActivitySupport {
         let items = message["content"] as? [[String: Any]] ?? []
         switch object["type"] as? String {
         case "user":
+            if let result = object["toolUseResult"] as? [String: Any] {
+                if let path = result["filePath"] as? String {
+                    let patch = (result["structuredPatch"] as? [[String: Any]] ?? []).compactMap { $0["lines"] as? [String] }
+                    if !patch.isEmpty {
+                        activity.changed(path, hunks: patch.flatMap { hunks(unified: $0) })
+                    } else if result["type"] as? String == "create", let content = result["content"] as? String {
+                        activity.changed(path, hunks: [added(content)])
+                    }
+                }
+                // Claude also notes what a shell command changed in its files.
+                for file in (result["bashEditDiff"] as? [String: Any])?["files"] as? [[String: Any]] ?? [] {
+                    guard let path = file["filePath"] as? String else { continue }
+                    let lines = (file["hunks"] as? [[String: Any]] ?? []).compactMap { $0["lines"] as? [String] }
+                    activity.changed(path, hunks: lines.flatMap { hunks(unified: $0) })
+                }
+            }
             if let text = message["content"] as? String { return userText(text, to: &activity) }
             for item in items {
                 switch item["type"] as? String {
@@ -245,9 +396,10 @@ enum AgentActivitySupport {
             activity.called(callID, step(tool: payload["name"] as? String ?? "", input: arguments))
         case ("response_item", "custom_tool_call"):
             let name = payload["name"] as? String ?? ""
-            activity.called(callID, name == "apply_patch"
-                ? AgentStep(verb: .edit, target: patchFile(payload["input"] as? String ?? ""))
-                : step(tool: name, input: [:]))
+            guard name == "apply_patch" else { return activity.called(callID, step(tool: name, input: [:])) }
+            let changes = patchChanges(payload["input"] as? String ?? "")
+            activity.called(callID, AgentStep(verb: .edit, target: changes.first.map { ($0.path as NSString).lastPathComponent } ?? ""))
+            for change in changes { activity.changed(change.path, hunks: change.hunks) }
         case ("response_item", "function_call_output"), ("response_item", "custom_tool_call_output"):
             activity.returned(callID)
         case ("response_item", "web_search_call"):
@@ -277,8 +429,14 @@ enum AgentActivitySupport {
         case "assistant.message":
             for request in data["toolRequests"] as? [[String: Any]] ?? [] {
                 guard let id = request["toolCallId"] as? String else { continue }
-                activity.called(id, step(tool: request["name"] as? String ?? "",
-                                         input: request["arguments"] as? [String: Any] ?? [:]))
+                let arguments = request["arguments"] as? [String: Any] ?? [:]
+                activity.called(id, step(tool: request["name"] as? String ?? "", input: arguments))
+                guard let path = arguments["path"] as? String else { continue }
+                if let text = arguments["file_text"] as? String {
+                    activity.changed(path, hunks: [added(text)])
+                } else if let old = arguments["old_str"] as? String, let new = arguments["new_str"] as? String {
+                    activity.changed(path, hunks: [hunk(old: old, new: new)])
+                }
             }
             if !["thinking", "commentary"].contains(data["phase"] as? String ?? "") {
                 activity.replied(data["content"] as? String)
@@ -312,6 +470,11 @@ enum AgentActivitySupport {
                 activity.called(call, step(tool: part["tool"] as? String ?? "", input: state["input"] as? [String: Any] ?? [:]))
             default:
                 activity.returned(call)
+                let input = state["input"] as? [String: Any] ?? [:]
+                if let diff = (state["metadata"] as? [String: Any])?["diff"] as? String,
+                   let path = (input["filePath"] ?? input["path"]) as? String {
+                    activity.changed(path, hunks: hunks(unified: diff.components(separatedBy: "\n")))
+                }
             }
         case "step-finish":
             if part["reason"] as? String == "stop" { activity.ended(failed: false) }
