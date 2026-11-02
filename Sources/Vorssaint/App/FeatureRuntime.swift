@@ -377,6 +377,10 @@ final class FeatureRuntime: ObservableObject {
             if AppFeature.notch.isAvailable { NotchService.shared.syncWithPreferences() }
             else { NotchWatchService.shared.stop() }
         },
+        .notchTranslate: {
+            if !NotchTranslateSupport.isEnabled() { NotchTranslateService.shared.stop() }
+            if AppFeature.notch.isAvailable { NotchService.shared.syncWithPreferences() }
+        },
         // Leaving folds the wings it rests in, and coming back greets.
         .notchMascot: {
             if AppFeature.notch.isAvailable { NotchService.shared.syncWithPreferences() }

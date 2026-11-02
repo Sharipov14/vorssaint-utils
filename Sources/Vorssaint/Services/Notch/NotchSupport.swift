@@ -7,7 +7,7 @@ import Foundation
 import CoreGraphics
 
 enum NotchModule: String, CaseIterable, Identifiable {
-    case controls, mixer, music, clipboard, captures, files, system, tools, calendar, notifications, timer, camera, downloads, scratchpad, agents, watch
+    case controls, mixer, music, clipboard, captures, files, system, tools, calendar, notifications, timer, camera, downloads, scratchpad, agents, watch, translate
     var id: String { rawValue }
 
     var symbol: String {
@@ -31,6 +31,7 @@ enum NotchModule: String, CaseIterable, Identifiable {
         case .scratchpad: return "note.text"
         case .agents: return "sparkles"
         case .watch: return "eye"
+        case .translate: return "translate"
         }
     }
 
@@ -53,6 +54,7 @@ enum NotchModule: String, CaseIterable, Identifiable {
         case .scratchpad: return "p"
         case .agents: return "g"
         case .watch: return "o"
+        case .translate: return "l"
         }
     }
 
@@ -76,6 +78,7 @@ enum NotchModule: String, CaseIterable, Identifiable {
         case .scratchpad: return AppFeature.scratchpad.isAvailable(in: defaults)
         case .agents: return AppFeature.notchAgents.isAvailable(in: defaults)
         case .watch: return AppFeature.notchWatch.isAvailable(in: defaults)
+        case .translate: return AppFeature.notchTranslate.isAvailable(in: defaults)
         case .system:
             return [.monitorCPU, .monitorGPU, .monitorMemory, .monitorNetwork,
                     .monitorDisk, .monitorPower, .fanControl, .connectedDevices].contains { (feature: AppFeature) in
@@ -1867,6 +1870,7 @@ enum NotchSupport {
                 && ($0 != .notifications || defaults.bool(forKey: DefaultsKey.notchNotificationsEnabled))
                 && ($0 != .agents || defaults.bool(forKey: DefaultsKey.notchAgentsEnabled))
                 && ($0 != .watch || defaults.bool(forKey: DefaultsKey.notchWatchEnabled))
+                && ($0 != .translate || defaults.bool(forKey: DefaultsKey.notchTranslateEnabled))
         }
     }
 
@@ -2094,6 +2098,10 @@ enum NotchSupport {
 
     static func routesAppPanel(in defaults: UserDefaults = .standard) -> Bool {
         isEnabled(in: defaults) && defaults.bool(forKey: DefaultsKey.notchAppPanel)
+    }
+
+    static func routesTranslate(in defaults: UserDefaults = .standard) -> Bool {
+        isEnabled(in: defaults) && modules(in: defaults).contains(.translate)
     }
 
     static func routesScratchpad(in defaults: UserDefaults = .standard) -> Bool {
@@ -2791,7 +2799,7 @@ struct NotchGeometry: Equatable {
                 // Only the cards a person chose; a short set leaves a short island.
                 contentHeight = min(budget, agentsHeight.map { $0 > 0 ? $0 : NotchLayout.emptyHeight } ?? budget)
             // Lists and previews fill the chosen content budget.
-            case .mixer, .calendar, .clipboard, .captures, .files, .notifications, .downloads, .camera, .scratchpad, .watch:
+            case .mixer, .calendar, .clipboard, .captures, .files, .notifications, .downloads, .camera, .scratchpad, .watch, .translate:
                 contentHeight = budget
             }
         }
