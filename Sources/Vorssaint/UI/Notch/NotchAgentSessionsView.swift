@@ -16,72 +16,34 @@ private let sessionMemory: ByteCountFormatter = {
     return formatter
 }()
 
-/// The Sessions card: the first few agents running, and the way to the rest.
-struct NotchAgentSessionsCard: View {
+/// The Live tab: every agent running, and the ports its processes left open.
+struct NotchAgentSessionsList: View {
+    let size: CGSize
+    /// The agents followed, whose sessions show.
     let providers: [AgentProvider]
+    /// The agents with cards, each said when it last worked while none runs.
+    let recent: [AgentProvider]
     let text: NotchAgentStrings
     /// Settings draws it with example rows and scans for nothing.
     let preview: Bool
-    let showAll: () -> Void
     @ObservedObject private var service = AgentSessionsService.shared
+    @ObservedObject private var usage = AgentUsageService.shared
+    @Environment(\.locale) private var locale
     @State private var selected: String?
 
     var body: some View {
-        let all = preview ? AgentSessionsSupport.sample(now: Date())
+        let sessions = preview ? AgentSessionsSupport.sample(now: Date())
             : AgentSessionsSupport.shown(service.sessions, providers: providers)
-        let (rows, hidden) = AgentSessionsSupport.preview(all)
-        NotchAgentCardChrome {
-            VStack(alignment: .leading, spacing: 5) {
-                NotchAgentCardHeader(title: text.sessionsCard, symbol: NotchAgentCard.sessions.symbol)
-                if !preview && !service.loaded {
-                    ProgressView().controlSize(.small).frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if rows.isEmpty {
-                    Text(text.noSessions).font(.system(size: 10.5)).foregroundStyle(.secondary)
-                } else {
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        NotchAgentSessionRows(sessions: rows, now: context.date, text: text, preview: preview,
-                                              selected: $selected)
-                    }
-                }
-                Spacer(minLength: 0)
-                if hidden > 0 || !service.orphans.isEmpty {
-                    Button(action: showAll) {
-                        HStack(spacing: 3) {
-                            Text(hidden > 0 ? text.seeAllSessions(all.count) : text.orphanedPorts(service.orphans.count))
-                                .lineLimit(1)
-                            Image(systemName: "chevron.right").imageScale(.small)
-                        }
-                        .font(.system(size: 10.5, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.85))
-                        .padding(.horizontal, 6)
-                        .frame(height: 18)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(NotchButtonStyle(cornerRadius: 9, lifts: false))
-                    // The Settings preview shows the card; it opens nothing.
-                    .disabled(preview)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-                }
-            }
-        }
-    }
-}
-
-/// Every agent running, and the ports its processes left open.
-struct NotchAgentSessionsList: View {
-    let size: CGSize
-    let providers: [AgentProvider]
-    let text: NotchAgentStrings
-    @ObservedObject private var service = AgentSessionsService.shared
-    @State private var selected: String?
-
-    var body: some View {
-        let sessions = AgentSessionsSupport.shown(service.sessions, providers: providers)
+        let orphans = preview ? [] : service.orphans
         Group {
-            if !service.loaded {
+            if !preview && !service.loaded {
                 ProgressView().controlSize(.small).frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if sessions.isEmpty && service.orphans.isEmpty {
-                NotchEmptyView(symbol: NotchAgentCard.sessions.symbol, message: text.noSessions)
+            } else if sessions.isEmpty && orphans.isEmpty {
+                if recent.isEmpty {
+                    NotchEmptyView(symbol: "terminal", message: text.noSessions)
+                } else {
+                    idle
+                }
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: NotchAgentSupport.spacing) {
@@ -89,17 +51,39 @@ struct NotchAgentSessionsList: View {
                             NotchAgentCardChrome {
                                 TimelineView(.periodic(from: .now, by: 1)) { context in
                                     NotchAgentSessionRows(sessions: sessions, now: context.date, text: text,
-                                                          preview: false, selected: $selected)
+                                                          preview: preview, selected: $selected)
                                 }
                             }
                         }
-                        if !service.orphans.isEmpty { orphans }
+                        if !orphans.isEmpty { self.orphans }
                     }
                 }
                 .scrollIndicators(.automatic)
             }
         }
         .frame(width: size.width, height: size.height, alignment: .top)
+    }
+
+    /// No agent runs: when each last worked.
+    private var idle: some View {
+        NotchAgentCardChrome {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(text.noSessions).font(.system(size: 10.5)).foregroundStyle(.secondary)
+                ForEach(recent) { provider in
+                    HStack(spacing: 5) {
+                        NotchAgentGlyph(provider: provider, size: 9, working: false)
+                        Text(provider.displayName).font(.system(size: 10.5, weight: .medium))
+                        Spacer(minLength: 4)
+                        Text(usage.snapshot.lastActivity[provider].map {
+                            $0.formatted(.relative(presentation: .named, unitsStyle: .abbreviated).locale(locale))
+                        } ?? text.idle)
+                            .font(.system(size: 9.5))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+            }
+        }
     }
 
     private var orphans: some View {

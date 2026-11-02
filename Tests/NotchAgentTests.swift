@@ -3146,10 +3146,10 @@ enum NotchAgentTests {
                         && NotchCompactActivity.agents.module == .agents,
                      "a working agent outranks music but not a download")
 
-        defaults.set("trend,unknown,trend,spend", forKey: DefaultsKey.notchAgentsCardOrder)
-        defaults.set("activity,projects", forKey: DefaultsKey.notchAgentsHiddenCards)
-        suite.expect(NotchAgentSupport.cards(in: defaults) == [.trend, .spend, .limits, .live, .models, .resets, .sessions],
-                     "the saved order ignores unknown and repeated cards and appends new ones")
+        defaults.set("trend,unknown,sessions,trend,live,spend", forKey: DefaultsKey.notchAgentsCardOrder)
+        defaults.set("activity,projects,live", forKey: DefaultsKey.notchAgentsHiddenCards)
+        suite.expect(NotchAgentSupport.cards(in: defaults) == [.trend, .spend, .limits, .models, .resets],
+                     "the saved order ignores unknown, repeated and retired cards and appends new ones")
         defaults.set(false, forKey: DefaultsKey.notchAgentsCodex)
         suite.expect(NotchAgentSupport.providers(in: defaults) == [.claude, .opencode, .copilot], "an agent can be left out")
         defaults.set(false, forKey: DefaultsKey.notchAgentsOpenCode)
@@ -3210,6 +3210,11 @@ enum NotchAgentTests {
                         == NotchAgentSupport.cardHeight + NotchAgentSupport.spacing + NotchAgentSupport.chartHeight
                         && NotchAgentSupport.contentHeight([]) == 0,
                      "the page is as tall as its rows")
+        suite.expect(NotchAgentSupport.pageHeight([[limits, codex], [trend]])
+                        == NotchAgentSupport.contentHeight([[limits, codex], [trend]])
+                        && NotchAgentSupport.pageHeight([[limits]]) == NotchAgentSupport.liveHeight
+                        && NotchAgentSupport.pageHeight([]) == NotchAgentSupport.liveHeight,
+                     "the Live tab keeps its room when the Statistics tab has few cards or none")
         let geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 1512, height: 982), safeAreaTop: 32,
                                      cameraWidth: 185, layout: .spacious, compactSideRoom: 200)
         suite.expect(geometry.expandedSize(module: .agents, agentsHeight: 96).height

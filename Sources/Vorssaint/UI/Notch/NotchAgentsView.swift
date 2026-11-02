@@ -3,7 +3,15 @@
 
 import SwiftUI
 
-/// The AI page: cards the person picked, paired across the strip.
+/// The AI page's two tabs, picked in the island's top row.
+private enum NotchAgentTab: CaseIterable {
+    case live, stats
+
+    var symbol: String { self == .live ? "waveform.path.ecg" : "chart.bar.xaxis" }
+}
+
+/// The AI page: the agents running now, or the cards the person picked,
+/// paired across the strip.
 struct NotchAgentsView: View {
     let size: CGSize
     @ObservedObject private var usage = AgentUsageService.shared
@@ -18,13 +26,15 @@ struct NotchAgentsView: View {
     @AppStorage(DefaultsKey.notchAgentsCodex) private var codex = true
     @AppStorage(DefaultsKey.notchAgentsOpenCode) private var opencode = true
     @AppStorage(DefaultsKey.notchAgentsCopilot) private var copilot = true
-    /// Swaps the cards for every session running, from the Sessions card.
-    @State private var showsAllSessions = false
+    /// Nil until the person picks one, so each showing opens on the agents running.
+    @State private var tab: NotchAgentTab?
     /// Whether this view has asked the service to scan, which it must undo once.
     @State private var watching = false
 
     private var text: NotchAgentStrings { FeatureStrings.notchAgents(l10n.language) }
     private var chosenPeriod: AgentPeriod { AgentPeriod(rawValue: period) ?? .today }
+    /// Settings, where the cards are arranged, opens on them.
+    private var shownTab: NotchAgentTab { tab ?? (preview ? .stats : .live) }
 
     /// The Codex homes the person added, each with a card in the Limits
     /// card's place, so none while that card is hidden.
@@ -54,49 +64,29 @@ struct NotchAgentsView: View {
                                       width: size.width)
     }
 
-    /// Processes are scanned only while the Sessions card or the full list shows.
-    private var watchesSessions: Bool {
-        if showsAllSessions { return !preview }
-        return !preview && (usage.snapshot.loaded || !codexAccounts.isEmpty) && !providers.isEmpty
-            && rows.joined().contains { $0.card == .sessions }
+    /// Processes are scanned only while the Live tab shows.
+    private var watchesSessions: Bool { !preview && shownTab == .live }
+
+    /// The period drives several cards, so it sits in the island's top row
+    /// while any of them shows.
+    private var showsPeriod: Bool {
+        (usage.snapshot.loaded || !codexAccounts.isEmpty) && !providers.isEmpty
+            && rows.joined().contains { $0.card.followsPeriod }
     }
 
     var body: some View {
         Group {
-            if showsAllSessions && !preview {
-                NotchAgentSessionsList(size: size, providers: followed, text: text)
-                    .notchBand(leading: {
-                        NotchBandBackButton(title: text.sessionsCard) { showsAllSessions = false }
-                    })
-            } else if !usage.snapshot.loaded && codexAccounts.isEmpty {
-                VStack(spacing: 10) {
-                    ProgressView().controlSize(.small)
-                    Text(text.loading).font(.system(size: 11)).foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if providers.isEmpty {
-                NotchEmptyView(symbol: "sparkles", message: text.empty)
-            } else if rows.isEmpty {
-                NotchEmptyView(symbol: "square.grid.2x2", message: text.noCards)
+            if shownTab == .live {
+                NotchAgentSessionsList(size: size, providers: followed, recent: providers, text: text, preview: preview)
             } else {
-                let rows = rows
-                TimelineView(.periodic(from: .now, by: 15)) { context in
-                    if NotchAgentSupport.contentHeight(rows) > size.height + 0.5 {
-                        ScrollView { grid(rows, now: context.date) }
-                            .scrollIndicators(.automatic)
-                    } else {
-                        grid(rows, now: context.date)
-                    }
-                }
-                // The period drives several cards, so it sits in the island's
-                // top row, beside the camera, while any of them shows.
-                .notchBand(leading: {
-                    if rows.joined().contains(where: { $0.card.followsPeriod }) { periodMenu }
-                })
+                statistics
             }
         }
         .frame(width: size.width, height: size.height, alignment: .top)
         .environment(\.locale, l10n.language.formattingLocale())
+        .notchBand(leading: { tabs }, trailing: {
+            if shownTab == .stats && showsPeriod { periodMenu }
+        })
         .onAppear {
             usage.pageDidAppear(preview: preview)
             accounts.pageDidAppear(preview: preview)
@@ -108,8 +98,69 @@ struct NotchAgentsView: View {
             usage.pageDidDisappear()
             accounts.pageDidDisappear()
             setWatching(false)
-            showsAllSessions = false
+            tab = nil
         }
+    }
+
+    @ViewBuilder private var statistics: some View {
+        if !usage.snapshot.loaded && codexAccounts.isEmpty {
+            VStack(spacing: 10) {
+                ProgressView().controlSize(.small)
+                Text(text.loading).font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if providers.isEmpty {
+            NotchEmptyView(symbol: "sparkles", message: text.empty)
+        } else if rows.isEmpty {
+            NotchEmptyView(symbol: "square.grid.2x2", message: text.noCards)
+        } else {
+            let rows = rows
+            TimelineView(.periodic(from: .now, by: 15)) { context in
+                if NotchAgentSupport.contentHeight(rows) > size.height + 0.5 {
+                    ScrollView { grid(rows, now: context.date) }
+                        .scrollIndicators(.automatic)
+                } else {
+                    grid(rows, now: context.date)
+                }
+            }
+        }
+    }
+
+    /// Labels where the row has room for them, otherwise the symbols alone.
+    private var tabs: some View {
+        ViewThatFits(in: .horizontal) {
+            tabButtons(labeled: true)
+            tabButtons(labeled: false)
+        }
+    }
+
+    private func tabButtons(labeled: Bool) -> some View {
+        // A turn in progress shows on the Live tab from the Statistics one too.
+        let working = usage.snapshot.live.first?.provider
+        return HStack(spacing: 2) {
+            ForEach(NotchAgentTab.allCases, id: \.self) { option in
+                let title = option == .live ? text.liveTab : text.statsTab
+                let current = option == shownTab
+                Button { tab = option } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: option.symbol)
+                        if labeled { Text(title).lineLimit(1) }
+                        if option == .live, let working { NotchAgentPulse(tint: working.tint, size: 3) }
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.white.opacity(current ? 0.95 : 0.55))
+                    .padding(.horizontal, 7)
+                    .frame(height: 26)
+                    .background(.white.opacity(current ? 0.14 : 0), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                }
+                .buttonStyle(NotchButtonStyle(cornerRadius: 9))
+                .help(title)
+                .accessibilityLabel(title)
+                .accessibilityAddTraits(current ? .isSelected : [])
+            }
+        }
+        .fixedSize()
     }
 
     private func syncSessions() {
@@ -156,8 +207,6 @@ struct NotchAgentsView: View {
             }
         case .spend:
             NotchAgentSpendCard(snapshot: snapshot, providers: providers, period: shown, text: text)
-        case .live:
-            NotchAgentLiveCard(snapshot: snapshot, providers: providers, text: text)
         case .trend:
             NotchAgentTrendCard(snapshot: snapshot, providers: providers, period: shown, text: text)
         case .models:
@@ -170,8 +219,6 @@ struct NotchAgentsView: View {
             NotchAgentActivityCard(snapshot: snapshot, text: text)
         case .resets:
             NotchAgentResetsCard(now: now, text: text, showsDefaultAccount: tile.namesDefaultAccount)
-        case .sessions:
-            NotchAgentSessionsCard(providers: followed, text: text, preview: preview) { showsAllSessions = true }
         }
     }
 
@@ -632,84 +679,6 @@ private struct NotchAgentSpendCard: View {
         var parts = [text.tokens(AgentFormat.tokens(usage.total.tokens.total))]
         if let rate = usage.total.tokens.cacheHitRate, rate > 0 { parts.append(text.cached(AgentFormat.percent(rate))) }
         return parts.joined(separator: " · ")
-    }
-}
-
-// MARK: Now
-
-private struct NotchAgentLiveCard: View {
-    let snapshot: AgentUsageSnapshot
-    let providers: [AgentProvider]
-    let text: NotchAgentStrings
-    @Environment(\.locale) private var locale
-
-    var body: some View {
-        let live = snapshot.live.filter { providers.contains($0.provider) }
-        NotchAgentCardChrome {
-            VStack(alignment: .leading, spacing: 7) {
-                NotchAgentCardHeader(title: text.liveCard, symbol: NotchAgentCard.live.symbol,
-                                     tint: live.first?.provider.tint ?? .secondary) {
-                    HStack(spacing: 4) {
-                        if live.count > 2 { NotchAgentChip(text: "+\(live.count - 2)") }
-                        if let first = live.first { NotchAgentPulse(tint: first.provider.tint, size: 5) }
-                    }
-                }
-                if live.isEmpty {
-                    VStack(alignment: .leading, spacing: 5) {
-                        ForEach(providers) { idleRow($0) }
-                    }
-                } else {
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        VStack(alignment: .leading, spacing: 5) {
-                            ForEach(live.prefix(2)) { row($0, now: context.date) }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private func row(_ session: AgentLiveSession, now: Date) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            HStack(spacing: 4) {
-                NotchAgentGlyph(provider: session.provider, size: 9)
-                Text(session.project.isEmpty ? session.provider.displayName : session.project)
-                    .font(.system(size: 11, weight: .semibold))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer(minLength: 4)
-                Text(AgentFormat.clock(now.timeIntervalSince(session.started)))
-                    .font(.system(size: 11, weight: .medium))
-                    .monospacedDigit()
-                    .foregroundStyle(session.provider.tint)
-            }
-            // Tokens the agent wrote, as its own window counts them; every
-            // call also reads the whole context again, which the tooltip and
-            // the cost include.
-            Text([AgentPricing.displayName(session.model),
-                  session.tokens.output > 0 ? text.written(AgentFormat.tokens(session.tokens.output)) : "",
-                  session.cost > 0 ? AgentFormat.cost(session.cost) : ""]
-                    .filter { !$0.isEmpty }.joined(separator: " · "))
-                .font(.system(size: 9.5))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-        }
-        .help(text.tokens(AgentFormat.tokens(session.tokens.total)) + " · "
-              + text.cached(AgentFormat.percent(session.tokens.cacheHitRate ?? 0)))
-    }
-
-    private func idleRow(_ provider: AgentProvider) -> some View {
-        HStack(spacing: 5) {
-            NotchAgentGlyph(provider: provider, size: 9, working: false)
-            Text(provider.displayName).font(.system(size: 10.5, weight: .medium))
-            Spacer(minLength: 4)
-            Text(snapshot.lastActivity[provider].map {
-                $0.formatted(.relative(presentation: .named, unitsStyle: .abbreviated).locale(locale))
-            } ?? text.idle)
-                .font(.system(size: 9.5))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-        }
     }
 }
 

@@ -117,7 +117,6 @@ enum AgentSessionsSupport {
     static let subagentWindow: TimeInterval = 30
     /// Claude's start time and the process's agree to within this.
     static let startTolerance: TimeInterval = 5
-    static let previewLimit = 3
 
     // MARK: Recognizing agents
 
@@ -349,10 +348,6 @@ enum AgentSessionsSupport {
             }
             return true
         }
-    }
-
-    static func preview(_ sessions: [AgentSession]) -> (rows: [AgentSession], hidden: Int) {
-        (Array(sessions.prefix(previewLimit)), max(0, sessions.count - previewLimit))
     }
 
     /// What the Settings preview shows instead of scanning for processes.

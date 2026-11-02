@@ -9,7 +9,7 @@ enum AgentSessionsTests {
         suite.run("agent sessions: the process tree") { tree(suite) }
         suite.run("agent sessions: Claude's files") { claudeFiles(suite) }
         suite.run("agent sessions: orphaned ports") { orphans(suite) }
-        suite.run("agent sessions: card") { card(suite) }
+        suite.run("agent sessions: live tab") { liveTab(suite) }
     }
 
     private static let now = Date(timeIntervalSince1970: 1_800_000_000)
@@ -203,11 +203,8 @@ enum AgentSessionsTests {
         suite.expect(AgentSessionsSupport.ports(from: entries) == [owner], "one port on two addresses is one port")
     }
 
-    private static func card(_ suite: TestSuite) {
+    private static func liveTab(_ suite: TestSuite) {
         let sessions = (1...5).map { AgentSession(id: String($0), kind: .claude, pid: Int32($0), identity: UInt64($0)) }
-        let preview = AgentSessionsSupport.preview(sessions)
-        suite.expect(preview.rows.map(\.pid) == [1, 2, 3] && preview.hidden == 2, "the card shows three and counts the rest")
-        suite.expect(AgentSessionsSupport.preview(Array(sessions.prefix(2))).hidden == 0, "nothing is hidden below the limit")
         let mixed = sessions.prefix(2).map { $0 } + [AgentSession(id: "h", kind: .hermes, pid: 9, identity: 9),
                                                       AgentSession(id: "c", kind: .codex, pid: 8, identity: 8)]
         suite.expect(AgentSessionsSupport.shown(mixed, providers: [.codex]).map(\.pid) == [9, 8],

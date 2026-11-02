@@ -875,8 +875,9 @@ final class NotchService: ObservableObject {
                                         ? agentsContentHeight(width: geometry.contentWidth) : nil)
     }
 
-    /// The AI page is as tall as the cards it shows; nil while the logs are
-    /// first read, when the page fills the island with its progress.
+    /// The AI page is as tall as the cards it shows, and never shorter than its
+    /// Live tab needs; nil while the logs are first read, when the page fills
+    /// the island with its progress.
     private func agentsContentHeight(width: CGFloat) -> CGFloat? {
         let usage = AgentUsageService.shared.snapshot
         let enabled = NotchAgentSupport.providers()
@@ -888,7 +889,7 @@ final class NotchService: ObservableObject {
         let providers = enabled.filter { usage.seen.contains($0) || ($0 == .codex && !accounts.isEmpty)
             || ($0 == .claude && claudeAccount != nil) }
         guard !providers.isEmpty else { return 0 }
-        return NotchAgentSupport.contentHeight(NotchAgentSupport.rows(
+        return NotchAgentSupport.pageHeight(NotchAgentSupport.rows(
             NotchAgentSupport.tiles(cards: NotchAgentSupport.cards(), providers: providers, codexAccounts: accounts,
                                     claudeAccount: claudeAccount),
             width: width))
