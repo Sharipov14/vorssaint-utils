@@ -374,6 +374,7 @@ final class FeatureRuntime: ObservableObject {
             else {
                 AgentUsageService.shared.stop()
                 AgentSessionsService.shared.stop()
+                AgentApprovalService.shared.stop()
             }
         },
         .notchWatch: {

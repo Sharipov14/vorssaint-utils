@@ -1159,6 +1159,8 @@ final class NotchService: ObservableObject {
             AgentUsageService.shared.stop()
             AgentSessionsService.shared.stop()
         }
+        // Permission requests are heard while the page can show; locked, they go back to the terminal.
+        AgentApprovalService.shared.syncWithPreferences()
         guard !suspended else {
             if session.canRunTimer { NotchTimerService.shared.syncWithPreferences() }
             else { NotchTimerService.shared.suspend() }
@@ -1266,6 +1268,7 @@ final class NotchService: ObservableObject {
         NotchFileToolsService.shared.stop()
         AgentUsageService.shared.stop()
         AgentSessionsService.shared.stop()
+        AgentApprovalService.shared.stop()
         guard running else { return }
         running = false
         NotchTimerService.shared.stop()

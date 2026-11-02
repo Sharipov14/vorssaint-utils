@@ -36,6 +36,7 @@ struct NotchAgentSessionsList: View {
     @Binding var diff: AgentDiffTarget?
     @ObservedObject private var service = AgentSessionsService.shared
     @ObservedObject private var usage = AgentUsageService.shared
+    @ObservedObject private var approvals = AgentApprovalService.shared
     @Environment(\.locale) private var locale
     @State private var selected: String?
 
@@ -43,6 +44,7 @@ struct NotchAgentSessionsList: View {
         let sessions = preview ? AgentSessionsSupport.sample(now: Date())
             : AgentSessionsSupport.shown(service.sessions, providers: providers)
         let orphans = preview ? [] : service.orphans
+        let pending = preview ? [] : approvals.pending
         // The usage reader names a turn after its log, as the sessions do.
         let turns = Dictionary(usage.snapshot.live.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let opened = diff.flatMap { target in
@@ -51,9 +53,9 @@ struct NotchAgentSessionsList: View {
         Group {
             if let opened {
                 NotchAgentDiffView(file: opened)
-            } else if !preview && !service.loaded {
+            } else if pending.isEmpty && !preview && !service.loaded {
                 ProgressView().controlSize(.small).frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if sessions.isEmpty && orphans.isEmpty {
+            } else if pending.isEmpty && sessions.isEmpty && orphans.isEmpty {
                 if recent.isEmpty {
                     NotchEmptyView(symbol: "terminal", message: text.noSessions)
                 } else {
@@ -62,6 +64,7 @@ struct NotchAgentSessionsList: View {
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: NotchAgentSupport.spacing) {
+                        ForEach(pending) { NotchAgentApprovalCard(approval: $0, text: text) }
                         if !sessions.isEmpty {
                             NotchAgentCardChrome {
                                 TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -139,6 +142,69 @@ struct NotchAgentSessionsList: View {
                 }
             }
         }
+    }
+}
+
+/// A tool call Claude waits to have allowed, until the bar runs out and the
+/// terminal asks instead.
+private struct NotchAgentApprovalCard: View {
+    let approval: AgentApproval
+    let text: NotchAgentStrings
+
+    private var title: String { text.approval(AgentProvider.claude.displayName, tool: approval.tool) }
+
+    var body: some View {
+        NotchAgentCardChrome {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 5) {
+                    NotchAgentGlyph(provider: .claude, size: 9, working: false)
+                    Text(title).font(.system(size: 10.5, weight: .semibold)).lineLimit(1)
+                    Spacer(minLength: 4)
+                    Text(approval.folder).font(.system(size: 9.5)).foregroundStyle(.secondary).lineLimit(1)
+                }
+                if let detail = approval.detail {
+                    Text(detail)
+                        .font(.system(size: 9.5, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.8))
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                        .help(detail)
+                }
+                HStack(spacing: 6) {
+                    choice(text.deny, tint: .red) { answer(false) }
+                    choice(text.askInTerminal, tint: .white) { answer(nil) }
+                    Spacer(minLength: 4)
+                    choice(text.allow, tint: .green) { answer(true) }
+                }
+                TimelineView(.periodic(from: .now, by: 0.5)) { context in
+                    let left = max(0, approval.deadline.timeIntervalSince(context.date)) / AgentApprovalSupport.wait
+                    Capsule().fill(.white.opacity(0.12))
+                        .overlay(alignment: .leading) {
+                            GeometryReader { proxy in Capsule().fill(.orange).frame(width: proxy.size.width * left) }
+                        }
+                        .frame(height: 2)
+                }
+                .accessibilityHidden(true)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel([title, approval.folder, approval.detail ?? ""].filter { !$0.isEmpty }.joined(separator: ", "))
+    }
+
+    private func answer(_ allow: Bool?) { AgentApprovalService.shared.answer(approval.id, allow: allow) }
+
+    private func choice(_ label: String, tint: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(tint)
+                .lineLimit(1)
+                .padding(.horizontal, 9)
+                .frame(height: 20)
+                .background(tint.opacity(0.2), in: Capsule(style: .continuous))
+                .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(NotchButtonStyle(cornerRadius: 10))
     }
 }
 

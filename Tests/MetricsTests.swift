@@ -131,6 +131,7 @@ struct MetricsTests {
             ("agents", { NotchAgentTests.run(suite) }),
             ("agent-sessions", { AgentSessionsTests.run(suite) }),
             ("agent-activity", { AgentActivityTests.run(suite) }),
+            ("agent-approvals", { AgentApprovalTests.run(suite) }),
             ("features", {
                 FeatureCatalogTests.run(suite)
                 MenuPanelSectionGateContract.run(suite)

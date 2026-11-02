@@ -1,0 +1,257 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Vorssaint
+
+import Darwin
+import Foundation
+
+/// Claude's permission requests, asked in the notch. It listens only while
+/// its hook is in Claude's settings and the AI page can show, and nothing
+/// starts from `init`. Nothing is allowed or denied without a click: a request
+/// left alone, or one Claude stops waiting for, goes back to the terminal.
+final class AgentApprovalService: ObservableObject {
+    static let shared = AgentApprovalService()
+
+    enum Failure: Error { case unreadable, changed, writeFailed }
+
+    /// `settings.json` as it is and as it would be with the hook added or removed.
+    struct Change {
+        let original: Data?
+        let data: Data
+        let command: String
+    }
+
+    @Published private(set) var pending: [AgentApproval] = []
+    /// The hook is in `~/.claude/settings.json`, as last read.
+    @Published private(set) var installed = false
+
+    private let queue = DispatchQueue(label: "com.vorssaint.agent-approvals", qos: .userInitiated)
+    private let settingsURL = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".claude/settings.json")
+    // Main thread.
+    private var listener: DispatchSourceRead?
+    private var settingsRead = false
+    /// Each waiting request's connection; cancelling the source closes it.
+    private var connections: [UUID: (source: DispatchSourceRead, fd: Int32)] = [:]
+    /// What the first request changed about the island, undone after the last.
+    private var opened = false
+    private var pinned = false
+
+    private init() {}
+
+    /// Nil where the path is too long for a socket.
+    var socketPath: String? {
+        guard let path = PrivateFileStore.containerURL?.appending(path: AgentApprovalSupport.socketName).path,
+              path.utf8.count <= AgentApprovalSupport.socketPathLimit else { return nil }
+        return path
+    }
+
+    // MARK: Lifecycle
+
+    func syncWithPreferences() {
+        guard NotchAgentSupport.isEnabled() else { return stop() }
+        if !settingsRead { refresh() }
+        if installed { start() } else { stop() }
+    }
+
+    /// Reads Claude's settings again, as when the settings page opens.
+    func refresh() {
+        settingsRead = true
+        guard let socketPath else { installed = false; return }
+        installed = (try? readSettings()).map { AgentApprovalSupport.isInstalled(in: $0.object, socket: socketPath) } ?? false
+    }
+
+    /// Every waiting request goes back to the terminal.
+    func stop() {
+        for id in Array(connections.keys) { answer(id, allow: nil) }
+        guard let listener else { return }
+        listener.cancel()
+        self.listener = nil
+        if let socketPath { unlink(socketPath) }
+    }
+
+    // MARK: Claude's settings
+
+    /// Throws when the file cannot be read as settings, which are then left alone.
+    func change(installing: Bool) throws -> Change {
+        guard let socketPath else { throw Failure.writeFailed }
+        let (object, original) = try readSettings()
+        let command = AgentApprovalSupport.command(socket: socketPath)
+        guard let changed = AgentApprovalSupport.settings(object, installing: installing ? command : nil,
+                                                          socket: socketPath) else { throw Failure.unreadable }
+        return Change(original: original, data: Data(AgentApprovalSupport.json(changed).utf8), command: command)
+    }
+
+    /// Writes the change over the exact file it was made from, after a dated
+    /// copy beside it; a file that changed since is left alone.
+    func apply(_ change: Change) throws {
+        let manager = FileManager.default
+        let current = manager.fileExists(atPath: settingsURL.path) ? try? Data(contentsOf: settingsURL) : nil
+        guard current == change.original else { throw Failure.changed }
+        // A symlinked settings file stays a link to the file that changes.
+        let target = settingsURL.resolvingSymlinksInPath()
+        var mode = 0o600
+        if change.original != nil {
+            guard (try? manager.copyItem(at: target, to: backupURL())) != nil else { throw Failure.writeFailed }
+            mode = ((try? manager.attributesOfItem(atPath: target.path))?[.posixPermissions] as? Int).map { $0 & 0o777 } ?? mode
+        } else {
+            try? manager.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        }
+        // Written beside it and renamed over it, so a failure leaves the original whole.
+        let temp = target.deletingLastPathComponent().appending(path: ".\(target.lastPathComponent).vorssaint-\(getpid())")
+        try? manager.removeItem(at: temp)
+        guard manager.createFile(atPath: temp.path, contents: change.data, attributes: [.posixPermissions: 0o600]),
+              (try? manager.setAttributes([.posixPermissions: mode], ofItemAtPath: temp.path)) != nil,
+              rename(temp.path, target.path) == 0 else {
+            try? manager.removeItem(at: temp)
+            throw Failure.writeFailed
+        }
+        refresh()
+        syncWithPreferences()
+    }
+
+    /// The object and the bytes it came from; no file is empty settings, an
+    /// unreadable one is not.
+    private func readSettings() throws -> (object: [String: Any], original: Data?) {
+        guard FileManager.default.fileExists(atPath: settingsURL.path) else { return ([:], nil) }
+        guard let bytes = try? Data(contentsOf: settingsURL) else { throw Failure.unreadable }
+        if bytes.allSatisfy({ [0x20, 0x09, 0x0A, 0x0D].contains($0) }) { return ([:], bytes) }
+        guard let object = (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Any] else { throw Failure.unreadable }
+        return (object, bytes)
+    }
+
+    /// `settings.json.bak-20261102-174400`, never one that exists.
+    private func backupURL() -> URL {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let base = settingsURL.lastPathComponent + ".bak-" + formatter.string(from: Date())
+        let folder = settingsURL.deletingLastPathComponent()
+        var candidate = folder.appending(path: base)
+        var number = 2
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            candidate = folder.appending(path: "\(base)-\(number)")
+            number += 1
+        }
+        return candidate
+    }
+
+    // MARK: Listening
+
+    private func start() {
+        guard listener == nil, let socketPath, let container = PrivateFileStore.containerURL,
+              PrivateFileStore.createDirectory(at: container) else { return }
+        unlink(socketPath)
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { return }
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        withUnsafeMutableBytes(of: &address.sun_path) { $0.copyBytes(from: socketPath.utf8) }
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+        }
+        // The folder is the owner's alone; the socket is too.
+        guard bound == 0, chmod(socketPath, 0o600) == 0, listen(fd, 8) == 0,
+              fcntl(fd, F_SETFL, O_NONBLOCK) == 0 else {
+            close(fd)
+            unlink(socketPath)
+            return
+        }
+        let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
+        source.setEventHandler { [weak self] in self?.accept(on: fd) }
+        source.setCancelHandler { close(fd) }
+        listener = source
+        source.resume()
+    }
+
+    /// On `queue`. Only this account's processes are heard.
+    private func accept(on listener: Int32) {
+        while true {
+            let fd = Darwin.accept(listener, nil, nil)
+            guard fd >= 0 else { return }
+            var uid = uid_t(), gid = gid_t(), on: Int32 = 1
+            var timeout = timeval(tv_sec: 2, tv_usec: 0)
+            guard getpeereid(fd, &uid, &gid) == 0, uid == getuid(),
+                  fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) & ~O_NONBLOCK) == 0,
+                  setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size)) == 0,
+                  setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size)) == 0 else {
+                close(fd)
+                continue
+            }
+            receive(fd)
+        }
+    }
+
+    /// On `queue`: the request, read whole within the receive timeout.
+    private func receive(_ fd: Int32) {
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 64 << 10)
+        while true {
+            switch AgentApprovalSupport.request(data) {
+            case .incomplete:
+                let count = Darwin.read(fd, &buffer, buffer.count)
+                guard count > 0 else { close(fd); return }
+                data.append(contentsOf: buffer[..<count])
+            case .invalid:
+                close(fd)
+                return
+            case .body(let body):
+                guard let approval = AgentApprovalSupport.approval(from: body, id: UUID(), now: Date()) else {
+                    Self.send(nil, to: fd)
+                    close(fd)
+                    return
+                }
+                DispatchQueue.main.async { self.hold(approval, fd: fd) }
+                return
+            }
+        }
+    }
+
+    // MARK: Asking
+
+    private func hold(_ approval: AgentApproval, fd: Int32) {
+        let island = NotchService.shared
+        let wasExpanded = island.expanded, wasPinned = island.pinned
+        if listener != nil, pending.count < AgentApprovalSupport.pendingLimit {
+            // Pinned, so the card waits for the click; unfocused, so typing goes on.
+            island.open(.agents, pinned: true, takeFocus: false)
+        }
+        // An island that cannot show, locked or away, leaves it to the terminal.
+        guard listener != nil, pending.count < AgentApprovalSupport.pendingLimit,
+              island.expanded, island.selected == .agents else {
+            Self.send(nil, to: fd)
+            close(fd)
+            return
+        }
+        if pending.isEmpty {
+            opened = !wasExpanded
+            pinned = !wasPinned
+        }
+        // Readable again only once curl is gone: Claude stopped waiting.
+        let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: .main)
+        source.setEventHandler { [weak self] in self?.answer(approval.id, allow: nil) }
+        source.setCancelHandler { close(fd) }
+        connections[approval.id] = (source, fd)
+        pending.append(approval)
+        source.resume()
+        DispatchQueue.main.asyncAfter(deadline: .now() + AgentApprovalSupport.wait) { [weak self] in
+            self?.answer(approval.id, allow: nil)
+        }
+    }
+
+    /// Allow or deny from a click; nil hands the question to the terminal.
+    func answer(_ id: UUID, allow: Bool?) {
+        guard let connection = connections.removeValue(forKey: id) else { return }
+        Self.send(allow, to: connection.fd)
+        connection.source.cancel()
+        pending.removeAll { $0.id == id }
+        guard pending.isEmpty else { return }
+        let island = NotchService.shared
+        if opened { island.collapse() } else if pinned { island.pinned = false }
+        opened = false
+        pinned = false
+    }
+
+    private static func send(_ allow: Bool?, to fd: Int32) {
+        let response = AgentApprovalSupport.response(allow: allow)
+        _ = response.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
+    }
+}

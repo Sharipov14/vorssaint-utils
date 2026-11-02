@@ -16,6 +16,7 @@ struct NotchAgentsView: View {
     let size: CGSize
     @ObservedObject private var usage = AgentUsageService.shared
     @ObservedObject private var accounts = CodexProfileLimitsService.shared
+    @ObservedObject private var approvals = AgentApprovalService.shared
     @ObservedObject private var l10n = L10n.shared
     @Environment(\.notchSettingsPreview) private var preview
     @AppStorage(DefaultsKey.notchAgentsPeriod) private var period = AgentPeriod.today.rawValue
@@ -102,6 +103,12 @@ struct NotchAgentsView: View {
             syncSessions()
         }
         .onChange(of: watchesSessions) { _, _ in syncSessions() }
+        // A permission request waits on the Live tab, over whatever was open.
+        .onChange(of: approvals.pending.count) { before, after in
+            guard !preview, after > before else { return }
+            tab = nil
+            openDiff = nil
+        }
         .onDisappear {
             guard !preview else { return }
             usage.pageDidDisappear()
