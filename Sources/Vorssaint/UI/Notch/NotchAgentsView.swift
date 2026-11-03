@@ -31,7 +31,9 @@ struct NotchAgentsView: View {
     @AppStorage(DefaultsKey.notchAgentsCodex) private var codex = true
     @AppStorage(DefaultsKey.notchAgentsOpenCode) private var opencode = true
     @AppStorage(DefaultsKey.notchAgentsCopilot) private var copilot = true
-    /// Nil until the person picks one, so each showing opens on the agents running.
+    /// The tab picked last, so the page reopens on it until the app quits.
+    @MainActor private static var lastTab = NotchAgentTab.live
+    /// Nil until the person picks one here, so each showing opens on `lastTab`.
     @State private var tab: NotchAgentTab?
     /// A session's changed file, shown in full on the Live tab.
     @State private var openDiff: AgentDiffTarget?
@@ -44,7 +46,7 @@ struct NotchAgentsView: View {
     private var text: NotchAgentStrings { FeatureStrings.notchAgents(l10n.language) }
     private var chosenPeriod: AgentPeriod { AgentPeriod(rawValue: period) ?? .today }
     /// Settings, where the cards are arranged, opens on them.
-    private var shownTab: NotchAgentTab { tab ?? (preview ? .stats : .live) }
+    private var shownTab: NotchAgentTab { tab ?? (preview ? .stats : Self.lastTab) }
 
     /// The Codex homes the person added, each with a card in the Limits
     /// card's place, so none while that card is hidden.
@@ -114,10 +116,9 @@ struct NotchAgentsView: View {
             syncSessions()
         }
         .onChange(of: watchesSessions) { _, _ in syncSessions() }
-        // A permission request waits on the Live tab, over whatever was open.
+        // A request takes the island over, so the page comes back without the diff.
         .onChange(of: approvals.pending.count) { before, after in
             guard !preview, after > before else { return }
-            tab = nil
             openDiff = nil
         }
         .onDisappear {
@@ -169,7 +170,10 @@ struct NotchAgentsView: View {
             ForEach(NotchAgentTab.allCases, id: \.self) { option in
                 let title = option == .live ? text.liveTab : text.statsTab
                 let current = option == shownTab
-                Button { withAnimation(tabAnimation) { tab = option } } label: {
+                Button {
+                    if !preview { Self.lastTab = option }
+                    withAnimation(tabAnimation) { tab = option }
+                } label: {
                     HStack(spacing: 4) {
                         Image(systemName: option.symbol)
                         if labeled { Text(title).lineLimit(1) }
