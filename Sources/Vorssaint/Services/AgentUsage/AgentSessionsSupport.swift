@@ -137,6 +137,51 @@ struct AgentSessionGroup: Identifiable, Equatable {
     var id: String { session.id }
 }
 
+/// Which card of the Live tab is open, one at a time, and which of its
+/// subagents shows its details beneath the others.
+struct AgentSessionPicks: Equatable {
+    /// The card the person opened.
+    var card: String?
+    /// Sessions with subagents the person closed; until then the first
+    /// opens on them while no other card is picked.
+    var closed: Set<String> = []
+    /// The subagent picked in the open card.
+    var child: String?
+
+    func open(in groups: [AgentSessionGroup]) -> String? {
+        if let card, groups.contains(where: { $0.id == card }) { return card }
+        return groups.first { !$0.children.isEmpty && !closed.contains($0.id) }?.id
+    }
+
+    func picked(in group: AgentSessionGroup) -> AgentSession? {
+        child.flatMap { child in group.children.first { $0.id == child } }
+    }
+
+    /// Opening a card closes the one open before; closing it leaves all closed.
+    mutating func flip(_ id: String, in groups: [AgentSessionGroup]) {
+        child = nil
+        if open(in: groups) == id {
+            card = nil
+            closed.formUnion(groups.filter { !$0.children.isEmpty }.map(\.id))
+        } else {
+            card = id
+        }
+    }
+
+    /// Picking another subagent moves the details to it; picking it again hides them.
+    mutating func pick(_ id: String) {
+        child = child == id ? nil : id
+    }
+
+    /// Forgets what has gone; a session that lost its subagents opens on them
+    /// again once new ones start.
+    mutating func prune(_ groups: [AgentSessionGroup]) {
+        if let card, !groups.contains(where: { $0.id == card }) { self.card = nil }
+        closed.formIntersection(groups.filter { !$0.children.isEmpty }.map(\.id))
+        if let child, !groups.contains(where: { $0.children.contains { $0.id == child } }) { self.child = nil }
+    }
+}
+
 /// A process that listened under a session that has since ended and still does.
 struct AgentOrphan: Identifiable, Equatable {
     let pid: Int32

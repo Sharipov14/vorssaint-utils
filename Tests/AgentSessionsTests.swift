@@ -10,6 +10,35 @@ enum AgentSessionsTests {
         suite.run("agent sessions: Claude's files") { claudeFiles(suite) }
         suite.run("agent sessions: orphaned ports") { orphans(suite) }
         suite.run("agent sessions: live tab") { liveTab(suite) }
+        suite.run("agent sessions: one card open") { picks(suite) }
+    }
+
+    private static func picks(_ suite: TestSuite) {
+        func session(_ id: String, depth: Int = 0) -> AgentSession {
+            AgentSession(id: id, kind: .claude, pid: depth > 0 ? 0 : 1, identity: 1, depth: depth)
+        }
+        let groups = AgentSessionsSupport.groups([session("a"), session("b"), session("b.1", depth: 1), session("b.2", depth: 1),
+                                                  session("c"), session("c.1", depth: 1)])
+        var picks = AgentSessionPicks()
+        suite.expect(picks.open(in: groups) == "b", "until one is picked, the first session with subagents opens on them")
+        picks.pick("b.1")
+        picks.pick("b.2")
+        suite.expect(picks.picked(in: groups[1])?.id == "b.2", "picking another subagent moves the details to it")
+        picks.pick("b.2")
+        suite.expect(picks.picked(in: groups[1]) == nil, "picking it again hides them")
+        picks.pick("b.1")
+        picks.flip("a", in: groups)
+        suite.expect(picks.open(in: groups) == "a" && picks.child == nil, "opening a card closes the open one and its pick")
+        picks.flip("c", in: groups)
+        suite.expect(picks.open(in: groups) == "c", "one card is open at a time")
+        picks.flip("c", in: groups)
+        suite.expect(picks.open(in: groups) == nil, "closing it leaves all closed, those with subagents too")
+        picks.flip("b", in: groups)
+        picks.prune(Array(groups.dropFirst(2)))
+        suite.expect(picks.card == nil && picks.closed == ["c"], "what has gone is forgotten")
+        picks.prune(AgentSessionsSupport.groups([session("c")]) + [AgentSessionGroup(session: session("d"), children: [session("d.1", depth: 1)])])
+        suite.expect(picks.open(in: AgentSessionsSupport.groups([session("c"), session("c.1", depth: 1)])) == "c",
+                     "a session that lost its subagents opens on new ones")
     }
 
     private static let now = Date(timeIntervalSince1970: 1_800_000_000)

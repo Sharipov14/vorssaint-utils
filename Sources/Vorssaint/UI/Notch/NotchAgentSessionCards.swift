@@ -19,21 +19,16 @@ private struct NotchAgentSessionContext {
     let canEnd: Bool
     let width: CGFloat
     let turns: [String: AgentLiveSession]
-    let toggled: Set<String>
-    let toggle: (String) -> Void
+    let picks: AgentSessionPicks
+    /// The one card open now.
+    let openCard: String?
+    let flip: (AgentSessionGroup) -> Void
+    let pick: (AgentSession) -> Void
     let open: (AgentSession, AgentFileDiff) -> Void
 
-    /// A session with subagents opens on them until the person closes it;
-    /// any other card stays closed until picked.
-    func isOpen(_ group: AgentSessionGroup) -> Bool {
-        group.children.isEmpty ? toggled.contains(group.id) : !toggled.contains(NotchAgentSessionCards.closedKey(group.id))
-    }
+    func isOpen(_ group: AgentSessionGroup) -> Bool { group.id == openCard }
 
-    func isOpen(child: AgentSession) -> Bool { toggled.contains(child.id) }
-
-    func flip(_ group: AgentSessionGroup) {
-        toggle(group.children.isEmpty ? group.id : NotchAgentSessionCards.closedKey(group.id))
-    }
+    func isPicked(_ child: AgentSession) -> Bool { child.id == picks.child }
 
     func turn(of session: AgentSession) -> AgentLiveSession? { session.log.flatMap { turns[$0] } }
 }
@@ -49,15 +44,11 @@ struct NotchAgentSessionCards: View {
     let preview: Bool
     let width: CGFloat
     let layout: NotchAgentSessionLayout
-    /// The cards the person opened, and the sessions with subagents they closed.
-    @Binding var toggled: Set<String>
+    /// The open card and its picked subagent.
+    @Binding var picks: AgentSessionPicks
     let open: (AgentSession, AgentFileDiff) -> Void
     @ObservedObject private var features = FeatureRuntime.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    /// A session with subagents is open unless this names it, so it opens
-    /// again once its subagents are gone and come back.
-    static func closedKey(_ id: String) -> String { id + "+" }
 
     /// Ending a session needs the Kill Process feature, as freeing a port does;
     /// read again when features change.
@@ -69,7 +60,9 @@ struct NotchAgentSessionCards: View {
     var body: some View {
         let groups = AgentSessionsSupport.groups(sessions)
         let context = NotchAgentSessionContext(now: now, text: text, preview: preview, canEnd: canEnd, width: width, turns: turns,
-                                               toggled: toggled, toggle: flip, open: open)
+                                               picks: picks, openCard: picks.open(in: groups),
+                                               flip: { group in change { picks.flip(group.id, in: groups) } },
+                                               pick: { child in change { picks.pick(child.id) } }, open: open)
         Group {
             switch layout {
             case .list:
@@ -81,19 +74,17 @@ struct NotchAgentSessionCards: View {
             }
         }
         // What was opened or closed and has since gone, or lost its subagents, is forgotten.
-        .onChange(of: Self.keys(groups)) { _, keys in toggled.formIntersection(keys) }
+        .onChange(of: Self.keys(groups)) { picks.prune(AgentSessionsSupport.groups(sessions)) }
     }
 
     private static func keys(_ groups: [AgentSessionGroup]) -> Set<String> {
         Set(groups.flatMap { group in
-            [group.children.isEmpty ? group.id : closedKey(group.id)] + group.children.map(\.id)
+            [group.children.isEmpty ? group.id : group.id + "+"] + group.children.map(\.id)
         })
     }
 
-    private func flip(_ key: String) {
-        withAnimation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.86)) {
-            if toggled.contains(key) { toggled.remove(key) } else { toggled.insert(key) }
-        }
+    private func change(_ update: () -> Void) {
+        withAnimation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.86), update)
     }
 }
 
@@ -601,7 +592,16 @@ private struct NotchAgentListCard: View {
                             .padding(.trailing, Self.inset)
                             .padding(.bottom, 10)
                     } else {
-                        tree.padding(.trailing, Self.inset).padding(.bottom, 6)
+                        VStack(alignment: .leading, spacing: 6) {
+                            tree
+                            if let child = context.picks.picked(in: group) {
+                                NotchAgentChildDetails(session: child, context: context)
+                                    .padding(.leading, Self.inset)
+                                    .transition(.opacity.combined(with: .offset(y: -6)))
+                            }
+                        }
+                        .padding(.trailing, Self.inset)
+                        .padding(.bottom, 8)
                     }
                 }
                 .transition(.opacity.combined(with: .offset(y: -6)))
@@ -717,49 +717,75 @@ private struct NotchAgentBranch: Shape {
 }
 
 /// A subagent, or an agent the session started, on its branch: its name
-/// over its task, what it does now and how long it has run. Opened, what it
-/// was asked, its latest reply, its model and its files.
+/// over its task, what it does now and how long it has run. Picked, it is
+/// marked, and its details show under the session's subagents.
 private struct NotchAgentListChild: View {
     let session: AgentSession
     let context: NotchAgentSessionContext
 
-    private var open: Bool { context.isOpen(child: session) }
+    private var picked: Bool { context.isPicked(session) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                NotchAgentCardButton(action: { context.toggle(session.id) }) {
-                    HStack(spacing: 8) {
-                        NotchAgentSessionPlaque(session: session, size: 28)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(session.shownName).font(.system(size: 12.5, weight: .semibold)).lineLimit(1)
-                            if let task = session.task ?? (session.isSubagent ? nil : session.host?.name) {
-                                Text(task).font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
-                            }
+        let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+        HStack(spacing: 8) {
+            NotchAgentCardButton(action: { context.pick(session) }) {
+                HStack(spacing: 8) {
+                    NotchAgentSessionPlaque(session: session, size: 28)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(session.shownName).font(.system(size: 12.5, weight: .semibold)).lineLimit(1)
+                        if let task = session.task ?? (session.isSubagent ? nil : session.host?.name) {
+                            Text(task).font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
                         }
-                        .layoutPriority(1)
-                        Spacer(minLength: 6)
-                        NotchAgentChildStep(session: session, text: context.text)
-                            .frame(maxWidth: 120, alignment: .trailing)
-                        NotchAgentSessionClock(session: session, now: context.now, text: context.text, size: 12, reserves: false)
                     }
-                }
-                .modifier(NotchAgentSessionAccessibility(session: session, context: context, open: open))
-                if !session.isSubagent, let host = session.host {
-                    NotchAgentSquareButton(symbol: "arrow.up.forward", label: context.text.showIn(host.name)) {
-                        NotchAgentSessionActions.show(session)
-                    }
-                    .disabled(context.preview)
+                    .layoutPriority(1)
+                    Spacer(minLength: 6)
+                    NotchAgentChildStep(session: session, text: context.text)
+                        .frame(maxWidth: 120, alignment: .trailing)
+                    NotchAgentSessionClock(session: session, now: context.now, text: context.text, size: 12, reserves: false)
                 }
             }
-            .padding(.vertical, 6)
-            if open && NotchAgentSessionDetails.hasContent(session, context: context) {
-                NotchAgentSessionDetails(session: session, context: context)
-                    .padding(.leading, 36)
-                    .padding(.bottom, 8)
-                    .transition(.opacity.combined(with: .offset(y: -6)))
+            .modifier(NotchAgentSessionAccessibility(session: session, context: context, open: picked))
+            if !session.isSubagent, let host = session.host {
+                NotchAgentSquareButton(symbol: "arrow.up.forward", label: context.text.showIn(host.name)) {
+                    NotchAgentSessionActions.show(session)
+                }
+                .disabled(context.preview)
             }
         }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 6)
+        .background(session.kind.tint.opacity(picked ? 0.12 : 0), in: shape)
+        .overlay { shape.strokeBorder(session.kind.tint.opacity(picked ? 0.4 : 0)).allowsHitTesting(false) }
+    }
+}
+
+/// The picked subagent's details, under all of the session's subagents;
+/// picking another one changes what it shows.
+private struct NotchAgentChildDetails: View {
+    let session: AgentSession
+    let context: NotchAgentSessionContext
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text(session.shownName).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(session.kind.tint)
+                if let task = session.task {
+                    Text(task).font(.system(size: 11)).foregroundStyle(.secondary).truncationMode(.tail)
+                }
+            }
+            .lineLimit(1)
+            .accessibilityAddTraits(.isHeader)
+            if NotchAgentSessionDetails.hasContent(session, context: context) {
+                NotchAgentSessionDetails(session: session, context: context)
+            }
+        }
+        // Each subagent keeps its own Show all.
+        .id(session.id)
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(session.kind.tint.opacity(0.06), in: shape)
+        .overlay(shape.strokeBorder(session.kind.tint.opacity(0.3)))
     }
 }
 
@@ -909,6 +935,10 @@ private struct NotchAgentWideTile: View {
                         NotchAgentSessionDetails(session: session, context: context, showsModel: false)
                     } else {
                         NotchAgentChildTiles(children: group.children, context: context, width: context.width - 24)
+                        if let child = context.picks.picked(in: group) {
+                            NotchAgentChildDetails(session: child, context: context)
+                                .transition(.opacity.combined(with: .offset(y: -6)))
+                        }
                     }
                 }
                 .transition(.opacity.combined(with: .offset(y: -6)))
@@ -969,8 +999,7 @@ private struct NotchAgentWideTile: View {
     }
 }
 
-/// A session's subagents as small tiles, as many to a row as fit; an
-/// opened one takes a row and shows its details.
+/// A session's subagents as small tiles, as many to a row as fit.
 private struct NotchAgentChildTiles: View {
     let children: [AgentSession]
     let context: NotchAgentSessionContext
@@ -979,13 +1008,13 @@ private struct NotchAgentChildTiles: View {
 
     var body: some View {
         let columns = AgentSessionsSupport.columns(width: width, minimum: 124, spacing: Self.spacing)
-        let rows = AgentSessionsSupport.rows(children, columns: columns) { context.isOpen(child: $0) }
+        let rows = AgentSessionsSupport.rows(children, columns: columns) { _ in false }
         VStack(spacing: Self.spacing) {
             ForEach(rows, id: \.first?.id) { row in
                 HStack(alignment: .top, spacing: Self.spacing) {
                     ForEach(row) { NotchAgentChildTile(session: $0, context: context) }
                     // A short row keeps its tiles the width of the others.
-                    if row.count < columns, !row.contains(where: { context.isOpen(child: $0) }) {
+                    if row.count < columns {
                         ForEach(row.count..<columns, id: \.self) { _ in Color.clear.frame(maxWidth: .infinity).frame(height: 0) }
                     }
                 }
@@ -999,47 +1028,41 @@ private struct NotchAgentChildTile: View {
     let session: AgentSession
     let context: NotchAgentSessionContext
 
-    private var open: Bool { context.isOpen(child: session) }
+    private var picked: Bool { context.isPicked(session) }
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 6) {
-                NotchAgentCardButton(action: { context.toggle(session.id) }) {
-                    VStack(alignment: .leading, spacing: 7) {
-                        HStack(alignment: .top, spacing: 7) {
-                            NotchAgentSessionPlaque(session: session, size: 28)
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(session.shownName).font(.system(size: 12, weight: .semibold)).lineLimit(1)
-                                if let task = session.task ?? (session.isSubagent ? nil : session.host?.name) {
-                                    Text(task).font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
-                                }
+        HStack(alignment: .top, spacing: 6) {
+            NotchAgentCardButton(action: { context.pick(session) }) {
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack(alignment: .top, spacing: 7) {
+                        NotchAgentSessionPlaque(session: session, size: 28)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(session.shownName).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                            if let task = session.task ?? (session.isSubagent ? nil : session.host?.name) {
+                                Text(task).font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
                             }
-                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        HStack(alignment: .firstTextBaseline, spacing: 4) {
-                            NotchAgentChildStep(session: session, text: context.text, size: 10.5)
-                            Spacer(minLength: 2)
-                            NotchAgentSessionClock(session: session, now: context.now, text: context.text, size: 11.5, reserves: false)
-                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                }
-                .modifier(NotchAgentSessionAccessibility(session: session, context: context, open: open))
-                if !session.isSubagent, let host = session.host {
-                    NotchAgentSquareButton(symbol: "arrow.up.forward", label: context.text.showIn(host.name)) {
-                        NotchAgentSessionActions.show(session)
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        NotchAgentChildStep(session: session, text: context.text, size: 10.5)
+                        Spacer(minLength: 2)
+                        NotchAgentSessionClock(session: session, now: context.now, text: context.text, size: 11.5, reserves: false)
                     }
-                    .disabled(context.preview)
                 }
             }
-            if open && NotchAgentSessionDetails.hasContent(session, context: context) {
-                NotchAgentSessionDetails(session: session, context: context)
-                    .transition(.opacity.combined(with: .offset(y: -6)))
+            .modifier(NotchAgentSessionAccessibility(session: session, context: context, open: picked))
+            if !session.isSubagent, let host = session.host {
+                NotchAgentSquareButton(symbol: "arrow.up.forward", label: context.text.showIn(host.name)) {
+                    NotchAgentSessionActions.show(session)
+                }
+                .disabled(context.preview)
             }
         }
         .padding(9)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .modifier(NotchControlSurface(cornerRadius: 12, selected: open, interactive: false))
-        .overlay { shape.strokeBorder(session.kind.tint.opacity(open ? 0.4 : 0)).allowsHitTesting(false) }
+        .modifier(NotchControlSurface(cornerRadius: 12, selected: picked, interactive: false))
+        .overlay { shape.strokeBorder(session.kind.tint.opacity(picked ? 0.55 : 0)).allowsHitTesting(false) }
     }
 }

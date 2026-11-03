@@ -64,8 +64,8 @@ struct NotchAgentSessionsList: View {
     @Environment(\.locale) private var locale
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(DefaultsKey.notchAgentsSessionLayout) private var layout = NotchAgentSessionLayout.list.rawValue
-    /// The cards opened, and the sessions with subagents closed.
-    @State private var toggled: Set<String> = []
+    /// The open card and its picked subagent.
+    @State private var picks = AgentSessionPicks()
 
     var body: some View {
         let sessions = preview ? AgentSessionsSupport.sample(now: Date())
@@ -96,7 +96,7 @@ struct NotchAgentSessionsList: View {
                                 NotchAgentSessionCards(sessions: sessions, turns: turns, now: context.date, text: text,
                                                        preview: preview, width: size.width,
                                                        layout: NotchAgentSessionLayout(rawValue: layout) ?? .list,
-                                                       toggled: $toggled) { session, file in
+                                                       picks: $picks) { session, file in
                                     withAnimation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.88)) {
                                         diff = AgentDiffTarget(session: session.id, path: file.path)
                                     }
