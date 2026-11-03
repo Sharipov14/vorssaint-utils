@@ -1810,6 +1810,7 @@ enum NotchTests {
         NotchKeyboardLightTests.run(suite)
         NotchActivityTests.run(suite)
         NotchWatchTests.run(suite)
+        NotchTranslateTests.run(suite)
         NotchMascotTests.run(suite)
         NotchMascotHidingContract.run(suite)
         NotchMusicExtrasTests.run(suite)

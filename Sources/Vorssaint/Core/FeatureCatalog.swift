@@ -31,7 +31,7 @@ enum AppFeature: String, CaseIterable {
          commandBar, screenRecorder, wallpaper, killProcess, portManager
     // Dynamic Island, then its extensions
     case notch, notchCalendar, notchNotifications, notchGestures, notchTimer, notchAccessories, notchLyrics,
-         notchQueue, notchLiveEqualizer, notchDownloads, notchAgents, notchWatch, notchMascot
+         notchQueue, notchLiveEqualizer, notchDownloads, notchAgents, notchWatch, notchMascot, notchTranslate
     // System monitor, one entry per metric family (temperatures live with
     // their parent metric: CPU temp with CPU, battery temp with power).
     case monitorCPU, monitorGPU, monitorMemory, monitorNetwork, monitorDisk, monitorPower, connectedDevices, fanControl
@@ -81,9 +81,9 @@ extension AppFeature {
                         from: edgeSnapDisabledZones
                     ).isEmpty)
         // Watch asks when an area is chosen and checks on every reading. The
-        // companion uses no permission at all.
+        // companion and the translator use no permission at all.
         case .screenOCR, .cleaningMode, .screenshot, .commandBar, .screenRecorder, .wallpaper, .notchWatch,
-             .notchMascot:
+             .notchMascot, .notchTranslate:
             return false
         default:
             return true
@@ -119,7 +119,7 @@ extension AppFeature {
             return .tools
         case .notch, .notchCalendar, .notchNotifications, .notchGestures, .notchTimer, .notchAccessories,
              .notchLyrics, .notchQueue, .notchLiveEqualizer, .notchDownloads, .notchAgents, .notchWatch,
-             .notchMascot:
+             .notchMascot, .notchTranslate:
             return .dynamicIsland
         case .monitorCPU, .monitorGPU, .monitorMemory, .monitorNetwork, .monitorDisk, .monitorPower,
              .connectedDevices, .fanControl:
@@ -197,6 +197,7 @@ extension AppFeature {
         case .notchAgents: return "sparkles"
         case .notchWatch: return "eye"
         case .notchMascot: return "face.smiling"
+        case .notchTranslate: return "translate"
         case .notch: return "macbook"
         case .radialMenu: return "circle.grid.cross"
         case .scratchpad: return "note.text"
@@ -272,6 +273,7 @@ extension AppFeature {
         case .notchAgents: return [DefaultsKey.notchAgentsEnabled]
         case .notchWatch: return [DefaultsKey.notchWatchEnabled]
         case .notchMascot: return [DefaultsKey.notchMascotEnabled]
+        case .notchTranslate: return [DefaultsKey.notchTranslateEnabled]
         case .notch: return [DefaultsKey.notchEnabled]
         case .radialMenu: return [DefaultsKey.radialMenuEnabled]
         case .clipboardHistory: return [DefaultsKey.clipboardHistoryEnabled]
@@ -340,6 +342,8 @@ extension AppFeature {
         case .notchAgents: return []
         // It only draws, and hears of what happens from the island itself.
         case .notchMascot: return []
+        // Apple's models need no grant, and an online service only the network.
+        case .notchTranslate: return []
         // The bars read the player's own audio output, which macOS gates
         // behind the same permission the mixer and the recorder ask for.
         case .notchLiveEqualizer: return [.audioCapture]
@@ -489,7 +493,8 @@ extension AppFeature {
              .connectedDevices:
             return true
         case .focusFollowsMouse, .scrollHorizontal, .scrollZoom, .linearScroll, .diskImageInstaller, .audioPriority,
-             .wallpaper, .killProcess, .portManager, .fanControl, .notchMascot, .spacesOrder, .quitApps:
+             .wallpaper, .killProcess, .portManager, .fanControl, .notchMascot, .spacesOrder, .quitApps,
+             .notchTranslate:
             return false
         }
     }

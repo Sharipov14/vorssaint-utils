@@ -3,14 +3,27 @@
 
 import SwiftUI
 
-/// The AI page's two tabs, picked in the island's top row.
+/// The AI page's tabs, picked in the island's top row.
 private enum NotchAgentTab: CaseIterable {
-    case live, stats
+    case live, stats, chat
 
-    var symbol: String { self == .live ? "waveform.path.ecg" : "chart.bar.xaxis" }
+    var symbol: String {
+        switch self {
+        case .live: return "waveform.path.ecg"
+        case .stats: return "chart.bar.xaxis"
+        case .chat: return NotchChatView.symbol
+        }
+    }
 
-    /// Live sits left of Statistics, so each slides in from its own side.
-    var transition: AnyTransition { .opacity.combined(with: .offset(x: self == .live ? -24 : 24)) }
+    /// Live and Chat slide in from their own side of the row; Statistics,
+    /// between them, only fades.
+    var transition: AnyTransition {
+        switch self {
+        case .live: return .opacity.combined(with: .offset(x: -24))
+        case .stats: return .opacity
+        case .chat: return .opacity.combined(with: .offset(x: 24))
+        }
+    }
 }
 
 /// The AI page: the agents running now, or the cards the person picked,
@@ -20,6 +33,9 @@ struct NotchAgentsView: View {
     @ObservedObject private var usage = AgentUsageService.shared
     @ObservedObject private var accounts = CodexProfileLimitsService.shared
     @ObservedObject private var approvals = AgentApprovalService.shared
+    /// Not observed: a reply typed out redraws the chat many times a second,
+    /// and only `pick` changes `isShown`, redrawing the page itself.
+    private var chat: NotchChatService { .shared }
     @ObservedObject private var l10n = L10n.shared
     @Environment(\.notchSettingsPreview) private var preview
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -46,7 +62,8 @@ struct NotchAgentsView: View {
 
     private var text: NotchAgentStrings { FeatureStrings.notchAgents(l10n.language) }
     private var chosenPeriod: AgentPeriod { AgentPeriod(rawValue: period) ?? .today }
-    /// Settings, where the cards are arranged, opens on them.
+    /// Settings, where the cards are arranged, opens on them. A chat left
+    /// open is where the page reopens, its conversation still there.
     private var shownTab: NotchAgentTab { tab ?? (preview ? .stats : Self.lastTab) }
 
     /// The Codex homes the person added, each with a card in the Limits
@@ -93,6 +110,9 @@ struct NotchAgentsView: View {
                 NotchAgentSessionsList(size: size, providers: followed, recent: providers, text: text, preview: preview,
                                        diff: $openDiff)
                     .transition(NotchAgentTab.live.transition)
+            } else if shownTab == .chat {
+                NotchChatView(size: size, preview: preview)
+                    .transition(NotchAgentTab.chat.transition)
             } else {
                 statistics.transition(NotchAgentTab.stats.transition)
             }
@@ -113,6 +133,8 @@ struct NotchAgentsView: View {
                 periodMenu
             } else if shownTab == .live && openDiff == nil {
                 layoutButtons.transition(.opacity)
+            } else if shownTab == .chat && !preview {
+                NotchChatBandControls()
             }
         })
         .onAppear {
@@ -173,12 +195,9 @@ struct NotchAgentsView: View {
         let working = usage.snapshot.live.first?.provider
         return HStack(spacing: 2) {
             ForEach(NotchAgentTab.allCases, id: \.self) { option in
-                let title = option == .live ? text.liveTab : text.statsTab
+                let title = self.title(option)
                 let current = option == shownTab
-                Button {
-                    if !preview { Self.lastTab = option }
-                    withAnimation(tabAnimation) { tab = option }
-                } label: {
+                Button { pick(option) } label: {
                     HStack(spacing: 4) {
                         Image(systemName: option.symbol)
                         if labeled { Text(title).lineLimit(1) }
@@ -190,8 +209,9 @@ struct NotchAgentsView: View {
                     .frame(height: 26)
                     .background {
                         if current {
+                            // Its own id per variant: ViewThatFits may build both.
                             RoundedRectangle(cornerRadius: 9, style: .continuous).fill(.white.opacity(0.14))
-                                .matchedGeometryEffect(id: "tab", in: tabSelection)
+                                .matchedGeometryEffect(id: labeled ? "labeled" : "symbols", in: tabSelection)
                         }
                     }
                     .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
@@ -236,6 +256,22 @@ struct NotchAgentsView: View {
         }
         .animation(tabAnimation, value: sessionLayout)
         .fixedSize()
+    }
+
+    private func title(_ tab: NotchAgentTab) -> String {
+        switch tab {
+        case .live: return text.liveTab
+        case .stats: return text.statsTab
+        case .chat: return FeatureStrings.notchChat(l10n.language).title
+        }
+    }
+
+    private func pick(_ option: NotchAgentTab) {
+        withAnimation(tabAnimation) { tab = option }
+        guard !preview else { return }
+        Self.lastTab = option
+        // The chat page takes the keyboard itself once it shows.
+        chat.isShown = option == .chat
     }
 
     private func syncSessions() {

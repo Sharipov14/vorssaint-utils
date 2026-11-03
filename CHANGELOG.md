@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- An optional Translate section in the Dynamic Island translates text as you type, on this Mac with Apple's models on macOS 15 and later, or with DeepL, Google Cloud Translation, LibreTranslate or an OpenAI-compatible server, a local model included, after Return. It detects the language or lets you pick it, swaps the pair, reads either side aloud, lists a single word's other translations from the Mac's dictionaries or the model, copies the result, opens in a window that floats over the others and keeps a history for as long as you choose. API keys stay in the keychain. Install it from Features, then Settings → Dynamic Island → Content → Translate.
+- The AI Agents page in the Dynamic Island has a Chat tab that talks to Anthropic, OpenAI, OpenCode Zen, OpenRouter, DeepSeek, Google Gemini, Ollama, LM Studio or any OpenAI-compatible or Anthropic-compatible server you add, each with its own address, key and models. Replies are typed out as they arrive, with Markdown and code blocks you can copy. A reasoning model's thinking folds into a block that shows how long it thought and opens to read it. You can stop, retry or start a new chat. The conversation stays in memory only and API keys stay in the keychain. Settings → Dynamic Island → Content → AI Agents → Chat.
+
 ## [3.4.3] - 2026-10-29
 
 ### Summary

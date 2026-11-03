@@ -386,7 +386,7 @@ enum FeatureCatalogTests {
 
         // MARK: Features hub catalog
 
-        suite.expect(AppFeature.allCases.count == 79, "feature catalog has 79 features")
+        suite.expect(AppFeature.allCases.count == 80, "feature catalog has 80 features")
         suite.expect(Set(AppFeature.allCases.map(\.rawValue)).count == AppFeature.allCases.count,
                "feature ids are unique")
         suite.expect(AppFeature.allCases.map(\.rawValue) == [
@@ -399,7 +399,7 @@ enum FeatureCatalogTests {
             "keepAwake", "brightness", "extraBrightness", "bluetoothSleep",
             "quickLauncher", "quickToggles", "quitApps", "colorPicker", "screenOCR", "cleaningMode", "mediaTools",
             "cleaner", "uninstaller", "homebrew", "appUpdates", "screenshot", "cameraPreview",
-            "radialMenu", "scratchpad", "commandBar", "screenRecorder", "wallpaper", "killProcess", "portManager", "notch", "notchCalendar", "notchNotifications", "notchGestures", "notchTimer", "notchAccessories", "notchLyrics", "notchQueue", "notchLiveEqualizer", "notchDownloads", "notchAgents", "notchWatch", "notchMascot",
+            "radialMenu", "scratchpad", "commandBar", "screenRecorder", "wallpaper", "killProcess", "portManager", "notch", "notchCalendar", "notchNotifications", "notchGestures", "notchTimer", "notchAccessories", "notchLyrics", "notchQueue", "notchLiveEqualizer", "notchDownloads", "notchAgents", "notchWatch", "notchMascot", "notchTranslate",
             "monitorCPU", "monitorGPU", "monitorMemory", "monitorNetwork", "monitorDisk", "monitorPower",
             "connectedDevices", "fanControl",
         ], "feature ids are stable (they persist inside availability keys)")
@@ -592,6 +592,7 @@ enum FeatureCatalogTests {
                 && (AppFeature.availabilityDefaults[AppFeature.focusFollowsMouse.availabilityKey] as? Bool) == false
                 && (AppFeature.availabilityDefaults[AppFeature.fanControl.availabilityKey] as? Bool) == false
                 && (AppFeature.availabilityDefaults[AppFeature.notchMascot.availabilityKey] as? Bool) == false
+                && (AppFeature.availabilityDefaults[AppFeature.notchTranslate.availabilityKey] as? Bool) == false
                 && (AppFeature.availabilityDefaults[AppFeature.quitApps.availabilityKey] as? Bool) == false,
                "features added after the list was frozen wait on the Features page instead of installing themselves")
         let linearScrollSuiteName = "com.vorssaint.tests.linear-scroll-availability.\(UUID().uuidString)"
@@ -693,7 +694,7 @@ enum FeatureCatalogTests {
         suite.expect(AppFeature.features(in: .dynamicIsland) == [
             .notch, .notchCalendar, .notchNotifications, .notchGestures, .notchTimer,
             .notchAccessories, .notchLyrics, .notchQueue, .notchLiveEqualizer, .notchDownloads, .notchAgents, .notchWatch,
-            .notchMascot,
+            .notchMascot, .notchTranslate,
         ], "the Dynamic Island heads its own hub section, followed by its extensions")
         suite.expect(AppFeature.dynamicIslandExtensions
                 == Array(AppFeature.features(in: .dynamicIsland).dropFirst()),
@@ -2560,6 +2561,13 @@ enum FeatureCatalogTests {
                 && BrightnessSupport.extendedDimmingLevel(hardware: 0.5, remembered: 0.1,
                                                              pictureDimmed: true) == 0.625,
                "a rebuild keeps only an app-applied picture dim and honors a changed hardware level")
+        let writeOnlyDim = 0.1
+        suite.expect(BrightnessSupport.extendedDimmingLevel(
+            hardware: BrightnessSupport.extendedDimmingComponents(for: writeOnlyDim).hardware,
+            remembered: writeOnlyDim, pictureDimmed: true) == writeOnlyDim
+                && BrightnessSupport.extendedDimmingLevel(hardware: 0.5, remembered: nil,
+                                                             pictureDimmed: false) == 0.625,
+               "a monitor that stops answering reads keeps its extra dimming level")
         suite.expect(BrightnessSupport.steppedKeyboardLightLevel(current: 0.5, direction: -1)
                 == 0.5 - BrightnessSupport.keyboardLightStep
                 && BrightnessSupport.steppedKeyboardLightLevel(current: 0.5, direction: 1)

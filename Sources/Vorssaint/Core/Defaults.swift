@@ -876,6 +876,20 @@ enum DefaultsKey {
     static let notchWatchEnabled = "notchWatchEnabled"
     static let notchWatchSound = "notchWatchSound"
     static let notchWatchCondition = "notchWatchCondition"
+    // Translate: a translator page in the island. API keys live in the keychain.
+    static let notchTranslateEnabled = "notchTranslateEnabled"
+    static let notchTranslateEngine = "notchTranslateEngine"         // apple | online
+    static let notchTranslateProvider = "notchTranslateProvider"     // NotchTranslateProvider
+    static let notchTranslateServerURL = "notchTranslateServerURL"   // prefix; one key per self-hosted service
+    static let notchTranslateModel = "notchTranslateModel"           // OpenAI-compatible model name
+    static let notchTranslateTarget = "notchTranslateTarget"         // the language text goes into
+    static let notchTranslateAlternate = "notchTranslateAlternate"   // where text already in the target goes
+    static let notchTranslateAutoDetect = "notchTranslateAutoDetect" // false: text is read as notchTranslateSource
+    static let notchTranslateSource = "notchTranslateSource"         // the language picked for the text
+    static let notchTranslateKeepsHistory = "notchTranslateKeepsHistory"
+    static let notchTranslateRetention = "notchTranslateRetention"   // never | day | week | month
+    static let notchTranslateShortcutEnabled = "notchTranslateShortcutEnabled"
+    static let notchTranslateShortcut = "notchTranslateShortcut"
     static let notchCalendarEnabled = "notchCalendarEnabled"
     static let notchCalendarCountdown = "notchCalendarCountdown"
     static let notchCalendarCountdownLead = "notchCalendarCountdownLead" // minutes before a start, chosen events included
@@ -907,6 +921,8 @@ enum DefaultsKey {
     static let notchAgentsLimitThreshold = "notchAgentsLimitThreshold"
     static let notchAgentsDailyBudget = "notchAgentsDailyBudget"
     static let notchAgentsPriceUpdates = "notchAgentsPriceUpdates"
+    static let notchChatProviders = "notchChatProviders"   // JSON [ChatProvider]; keys live in the keychain
+    static let notchChatModel = "notchChatModel"           // "<provider id>:<model>"
     static let notchEnabled = "notchEnabled"
     static let notchDisplay = "notchDisplay"
     // How the island looks on a display without a camera housing.
@@ -1505,6 +1521,8 @@ enum Defaults {
         DefaultsKey.notchAgentsLimitThreshold: NotchAgentSupport.defaultLimitThreshold,
         DefaultsKey.notchAgentsDailyBudget: 0.0,
         DefaultsKey.notchAgentsPriceUpdates: true,
+        DefaultsKey.notchChatProviders: "",
+        DefaultsKey.notchChatModel: "",
         DefaultsKey.notchLyricsEnabled: true,
         DefaultsKey.notchLyricsOnline: false,
         DefaultsKey.notchBrowserCovers: false,
@@ -1514,6 +1532,17 @@ enum Defaults {
         DefaultsKey.notchWatchEnabled: true,
         DefaultsKey.notchWatchSound: true,
         DefaultsKey.notchWatchCondition: NotchWatchCondition.changes.rawValue,
+        DefaultsKey.notchTranslateEnabled: true,
+        DefaultsKey.notchTranslateEngine: NotchTranslateEngine.apple.rawValue,
+        DefaultsKey.notchTranslateProvider: NotchTranslateProvider.deepL.rawValue,
+        DefaultsKey.notchTranslateServerURL + ".libre": "",
+        DefaultsKey.notchTranslateServerURL + ".openAI": "",
+        DefaultsKey.notchTranslateModel: "",
+        DefaultsKey.notchTranslateAutoDetect: true,
+        DefaultsKey.notchTranslateKeepsHistory: true,
+        DefaultsKey.notchTranslateRetention: ScratchpadRetention.never.rawValue,
+        DefaultsKey.notchTranslateShortcutEnabled: false,
+        DefaultsKey.notchTranslateShortcut: GlobalShortcut.notchTranslateDefault.storageValue,
         DefaultsKey.notchEnabled: false,
         DefaultsKey.notchDisplay: NotchDisplay.automatic.rawValue,
         DefaultsKey.notchSilhouette: NotchSilhouette.capsule.rawValue,
