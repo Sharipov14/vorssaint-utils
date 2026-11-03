@@ -43,6 +43,12 @@ struct NotchChatView: View {
             }
         }
         .frame(width: size.width, height: size.height)
+        .onAppear { if !preview { focusEditor() } }
+        // Clicking the island hands it the keyboard: the caret goes straight to the message.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { note in
+            guard !preview, let window = note.object as? NSWindow, window === editor.view?.window else { return }
+            focusEditor()
+        }
     }
 
     static let symbol = "bubble.left.and.bubble.right"
@@ -207,9 +213,14 @@ struct NotchChatView: View {
     }
 
     /// Only once the island already has the keyboard: showing the page
-    /// must not take it from the app in front.
-    private func focusEditor() {
-        guard let view = editor.view, let window = view.window, window.isKeyWindow else { return }
+    /// must not take it from the app in front. The editor may not be in the
+    /// window yet when the tab has just been picked, so it is tried again.
+    private func focusEditor(tries: Int = 6) {
+        guard let view = editor.view, let window = view.window else {
+            if tries > 0 { DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { focusEditor(tries: tries - 1) } }
+            return
+        }
+        guard window.isKeyWindow, window.firstResponder !== view else { return }
         window.makeFirstResponder(view)
         view.setSelectedRange(NSRange(location: (view.string as NSString).length, length: 0))
     }
