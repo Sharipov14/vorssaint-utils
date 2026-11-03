@@ -55,8 +55,9 @@ struct ChatPreset: Identifiable, Equatable {
     func provider() -> ChatProvider { ChatProvider(preset: id, name: name, wire: wire, baseURL: baseURL) }
 }
 
-struct ChatMessage: Equatable {
+struct ChatMessage: Equatable, Identifiable {
     enum Role: String { case user, assistant }
+    var id = UUID()
     var role: Role
     var text: String
 }

@@ -42,8 +42,19 @@ struct NotchChatStrings {
     let failureOffline: String
     let failureServerFormat: String
     let failureResponse: String
+    let placeholder: String
+    let emptyFormat: String
+    let send: String
+    let stop: String
+    let newChat: String
+    let retry: String
+    let openSettings: String
+    let needsSetup: String
+    let model: String
+    let thinking: String
 
     func wire(_ wire: ChatWire) -> String { wire == .openAI ? wireOpenAI : wireAnthropic }
+    func empty(_ model: String) -> String { String(format: emptyFormat, model) }
     func fetched(_ count: Int) -> String { String(format: fetchedFormat, count) }
     func modelCount(_ count: Int) -> String { String(format: modelCountFormat, count) }
     func deleteTitle(_ name: String) -> String { String(format: deleteTitleFormat, name) }
@@ -106,7 +117,17 @@ extension FeatureStrings {
             failureRate: "Too many requests. Try again in a moment.",
             failureOffline: "Can’t reach the provider.",
             failureServerFormat: "The provider answered with error %d.",
-            failureResponse: "The provider’s answer couldn’t be read."
+            failureResponse: "The provider’s answer couldn’t be read.",
+            placeholder: "Message",
+            emptyFormat: "Ask %@ anything.",
+            send: "Send",
+            stop: "Stop",
+            newChat: "New Chat",
+            retry: "Retry",
+            openSettings: "Open Settings",
+            needsSetup: "Add a provider and a model in Settings to start chatting.",
+            model: "Model",
+            thinking: "Thinking…"
         )
         case .ptBR: return NotchChatStrings(
             title: "Chat",
@@ -146,7 +167,17 @@ extension FeatureStrings {
             failureRate: "Pedidos demais. Tente de novo em instantes.",
             failureOffline: "Não foi possível acessar o provedor.",
             failureServerFormat: "O provedor respondeu com o erro %d.",
-            failureResponse: "Não foi possível ler a resposta do provedor."
+            failureResponse: "Não foi possível ler a resposta do provedor.",
+            placeholder: "Mensagem",
+            emptyFormat: "Pergunte qualquer coisa ao %@.",
+            send: "Enviar",
+            stop: "Parar",
+            newChat: "Novo Chat",
+            retry: "Tentar de Novo",
+            openSettings: "Abrir Ajustes",
+            needsSetup: "Adicione um provedor e um modelo nos Ajustes para começar a conversar.",
+            model: "Modelo",
+            thinking: "Pensando…"
         )
         case .es: return NotchChatStrings(
             title: "Chat",
@@ -186,7 +217,17 @@ extension FeatureStrings {
             failureRate: "Demasiadas solicitudes. Inténtalo de nuevo en un momento.",
             failureOffline: "No se puede conectar con el proveedor.",
             failureServerFormat: "El proveedor respondió con el error %d.",
-            failureResponse: "No se pudo leer la respuesta del proveedor."
+            failureResponse: "No se pudo leer la respuesta del proveedor.",
+            placeholder: "Mensaje",
+            emptyFormat: "Pregunta lo que quieras a %@.",
+            send: "Enviar",
+            stop: "Detener",
+            newChat: "Nuevo chat",
+            retry: "Reintentar",
+            openSettings: "Abrir Ajustes",
+            needsSetup: "Añade un proveedor y un modelo en Ajustes para empezar a chatear.",
+            model: "Modelo",
+            thinking: "Pensando…"
         )
         case .sk: return NotchChatStrings(
             title: "Chat",
@@ -226,7 +267,17 @@ extension FeatureStrings {
             failureRate: "Príliš veľa požiadaviek. Skúste to o chvíľu znova.",
             failureOffline: "Poskytovateľa sa nedá zastihnúť.",
             failureServerFormat: "Poskytovateľ odpovedal chybou %d.",
-            failureResponse: "Odpoveď poskytovateľa sa nedá prečítať."
+            failureResponse: "Odpoveď poskytovateľa sa nedá prečítať.",
+            placeholder: "Správa",
+            emptyFormat: "Opýtajte sa %@ na čokoľvek.",
+            send: "Odoslať",
+            stop: "Zastaviť",
+            newChat: "Nový chat",
+            retry: "Skúsiť znova",
+            openSettings: "Otvoriť Nastavenia",
+            needsSetup: "Pridajte v Nastaveniach poskytovateľa a model a začnite chatovať.",
+            model: "Model",
+            thinking: "Premýšľa…"
         )
         case .de: return NotchChatStrings(
             title: "Chat",
@@ -266,7 +317,17 @@ extension FeatureStrings {
             failureRate: "Zu viele Anfragen. Versuche es gleich noch einmal.",
             failureOffline: "Der Anbieter ist nicht erreichbar.",
             failureServerFormat: "Der Anbieter hat mit Fehler %d geantwortet.",
-            failureResponse: "Die Antwort des Anbieters konnte nicht gelesen werden."
+            failureResponse: "Die Antwort des Anbieters konnte nicht gelesen werden.",
+            placeholder: "Nachricht",
+            emptyFormat: "Frag %@, was du willst.",
+            send: "Senden",
+            stop: "Stoppen",
+            newChat: "Neuer Chat",
+            retry: "Erneut versuchen",
+            openSettings: "Einstellungen öffnen",
+            needsSetup: "Füge in den Einstellungen einen Anbieter und ein Modell hinzu, um zu chatten.",
+            model: "Modell",
+            thinking: "Denkt nach …"
         )
         case .fr: return NotchChatStrings(
             title: "Chat",
@@ -306,7 +367,17 @@ extension FeatureStrings {
             failureRate: "Trop de requêtes. Réessayez dans un instant.",
             failureOffline: "Impossible de joindre le fournisseur.",
             failureServerFormat: "Le fournisseur a répondu avec l’erreur %d.",
-            failureResponse: "La réponse du fournisseur n’a pas pu être lue."
+            failureResponse: "La réponse du fournisseur n’a pas pu être lue.",
+            placeholder: "Message",
+            emptyFormat: "Demandez ce que vous voulez à %@.",
+            send: "Envoyer",
+            stop: "Arrêter",
+            newChat: "Nouveau chat",
+            retry: "Réessayer",
+            openSettings: "Ouvrir les Réglages",
+            needsSetup: "Ajoutez un fournisseur et un modèle dans les Réglages pour commencer à discuter.",
+            model: "Modèle",
+            thinking: "Réflexion…"
         )
         case .it: return NotchChatStrings(
             title: "Chat",
@@ -346,7 +417,17 @@ extension FeatureStrings {
             failureRate: "Troppe richieste. Riprova tra un momento.",
             failureOffline: "Impossibile raggiungere il fornitore.",
             failureServerFormat: "Il fornitore ha risposto con l’errore %d.",
-            failureResponse: "Impossibile leggere la risposta del fornitore."
+            failureResponse: "Impossibile leggere la risposta del fornitore.",
+            placeholder: "Messaggio",
+            emptyFormat: "Chiedi qualsiasi cosa a %@.",
+            send: "Invia",
+            stop: "Interrompi",
+            newChat: "Nuova chat",
+            retry: "Riprova",
+            openSettings: "Apri Impostazioni",
+            needsSetup: "Aggiungi un fornitore e un modello nelle Impostazioni per iniziare a chattare.",
+            model: "Modello",
+            thinking: "Sto pensando…"
         )
         case .ru: return NotchChatStrings(
             title: "Чат",
@@ -386,7 +467,17 @@ extension FeatureStrings {
             failureRate: "Слишком много запросов. Попробуйте чуть позже.",
             failureOffline: "Не удаётся связаться с провайдером.",
             failureServerFormat: "Провайдер ответил ошибкой %d.",
-            failureResponse: "Не удалось прочитать ответ провайдера."
+            failureResponse: "Не удалось прочитать ответ провайдера.",
+            placeholder: "Сообщение",
+            emptyFormat: "Спросите %@ о чём угодно.",
+            send: "Отправить",
+            stop: "Остановить",
+            newChat: "Новый чат",
+            retry: "Повторить",
+            openSettings: "Открыть Настройки",
+            needsSetup: "Добавьте провайдера и модель в Настройках, чтобы начать чат.",
+            model: "Модель",
+            thinking: "Думает…"
         )
         case .tr: return NotchChatStrings(
             title: "Sohbet",
@@ -426,7 +517,17 @@ extension FeatureStrings {
             failureRate: "Çok fazla istek. Birazdan yeniden deneyin.",
             failureOffline: "Sağlayıcıya ulaşılamıyor.",
             failureServerFormat: "Sağlayıcı %d hatasıyla yanıt verdi.",
-            failureResponse: "Sağlayıcının yanıtı okunamadı."
+            failureResponse: "Sağlayıcının yanıtı okunamadı.",
+            placeholder: "Mesaj",
+            emptyFormat: "%@ modeline istediğinizi sorun.",
+            send: "Gönder",
+            stop: "Durdur",
+            newChat: "Yeni Sohbet",
+            retry: "Yeniden Dene",
+            openSettings: "Ayarlar’ı Aç",
+            needsSetup: "Sohbete başlamak için Ayarlar’da bir sağlayıcı ve model ekleyin.",
+            model: "Model",
+            thinking: "Düşünüyor…"
         )
         case .ja: return NotchChatStrings(
             title: "チャット",
@@ -466,7 +567,17 @@ extension FeatureStrings {
             failureRate: "リクエストが多すぎます。少し待ってからやり直してください。",
             failureOffline: "プロバイダに接続できません。",
             failureServerFormat: "プロバイダがエラー%dを返しました。",
-            failureResponse: "プロバイダの応答を読み取れませんでした。"
+            failureResponse: "プロバイダの応答を読み取れませんでした。",
+            placeholder: "メッセージ",
+            emptyFormat: "%@に何でも聞いてください。",
+            send: "送信",
+            stop: "停止",
+            newChat: "新規チャット",
+            retry: "再試行",
+            openSettings: "設定を開く",
+            needsSetup: "チャットを始めるには、設定でプロバイダとモデルを追加してください。",
+            model: "モデル",
+            thinking: "考え中…"
         )
         case .ko: return NotchChatStrings(
             title: "채팅",
@@ -506,7 +617,17 @@ extension FeatureStrings {
             failureRate: "요청이 너무 많습니다. 잠시 후 다시 시도하세요.",
             failureOffline: "제공자에 연결할 수 없습니다.",
             failureServerFormat: "제공자가 오류 %d(으)로 응답했습니다.",
-            failureResponse: "제공자의 응답을 읽을 수 없습니다."
+            failureResponse: "제공자의 응답을 읽을 수 없습니다.",
+            placeholder: "메시지",
+            emptyFormat: "%@에게 무엇이든 물어보세요.",
+            send: "보내기",
+            stop: "중지",
+            newChat: "새 채팅",
+            retry: "다시 시도",
+            openSettings: "설정 열기",
+            needsSetup: "채팅을 시작하려면 설정에서 제공자와 모델을 추가하세요.",
+            model: "모델",
+            thinking: "생각 중…"
         )
         case .uk: return NotchChatStrings(
             title: "Чат",
@@ -546,7 +667,17 @@ extension FeatureStrings {
             failureRate: "Забагато запитів. Спробуйте трохи згодом.",
             failureOffline: "Не вдається зв’язатися з провайдером.",
             failureServerFormat: "Провайдер відповів помилкою %d.",
-            failureResponse: "Не вдалося прочитати відповідь провайдера."
+            failureResponse: "Не вдалося прочитати відповідь провайдера.",
+            placeholder: "Повідомлення",
+            emptyFormat: "Запитайте %@ про будь-що.",
+            send: "Надіслати",
+            stop: "Зупинити",
+            newChat: "Новий чат",
+            retry: "Повторити",
+            openSettings: "Відкрити Параметри",
+            needsSetup: "Додайте провайдера й модель у Параметрах, щоб почати чат.",
+            model: "Модель",
+            thinking: "Думає…"
         )
         case .zhHans: return NotchChatStrings(
             title: "聊天",
@@ -586,7 +717,17 @@ extension FeatureStrings {
             failureRate: "请求过多。请稍后再试。",
             failureOffline: "无法连接到提供商。",
             failureServerFormat: "提供商返回了错误 %d。",
-            failureResponse: "无法读取提供商的回复。"
+            failureResponse: "无法读取提供商的回复。",
+            placeholder: "信息",
+            emptyFormat: "问 %@ 任何问题。",
+            send: "发送",
+            stop: "停止",
+            newChat: "新聊天",
+            retry: "重试",
+            openSettings: "打开设置",
+            needsSetup: "请在设置中添加提供商和模型以开始聊天。",
+            model: "模型",
+            thinking: "正在思考…"
         )
         case .zhTW: return NotchChatStrings(
             title: "聊天",
@@ -626,7 +767,17 @@ extension FeatureStrings {
             failureRate: "要求過多。請稍後再試。",
             failureOffline: "無法連接到供應商。",
             failureServerFormat: "供應商回傳了錯誤 %d。",
-            failureResponse: "無法讀取供應商的回覆。"
+            failureResponse: "無法讀取供應商的回覆。",
+            placeholder: "訊息",
+            emptyFormat: "問 %@ 任何問題。",
+            send: "傳送",
+            stop: "停止",
+            newChat: "新聊天",
+            retry: "重試",
+            openSettings: "打開設定",
+            needsSetup: "請在設定中加入供應商和模型以開始聊天。",
+            model: "模型",
+            thinking: "正在思考…"
         )
         case .zhHK: return NotchChatStrings(
             title: "聊天",
@@ -666,7 +817,17 @@ extension FeatureStrings {
             failureRate: "要求過多。請稍後再試。",
             failureOffline: "無法連接到供應商。",
             failureServerFormat: "供應商回傳了錯誤 %d。",
-            failureResponse: "無法讀取供應商的回覆。"
+            failureResponse: "無法讀取供應商的回覆。",
+            placeholder: "訊息",
+            emptyFormat: "問 %@ 任何問題。",
+            send: "傳送",
+            stop: "停止",
+            newChat: "新聊天",
+            retry: "重試",
+            openSettings: "打開設定",
+            needsSetup: "請在設定中加入供應商和模型以開始聊天。",
+            model: "模型",
+            thinking: "正在思考…"
         )
         }
     }
