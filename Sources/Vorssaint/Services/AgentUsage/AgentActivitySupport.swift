@@ -54,6 +54,10 @@ struct AgentActivity: Equatable {
     var model: String?
     /// When the turn running now began, by the log's first line of it read.
     var turnStarted: Date?
+    /// Tokens the latest request held with its reply, as the log counts them.
+    var context: Int?
+    /// The model's context window, where the log names it.
+    var contextWindow: Int?
 
     var inTurn: Bool { state == .thinking || state == .running }
 
@@ -374,7 +378,14 @@ enum AgentActivitySupport {
         case "assistant":
             if object["isApiErrorMessage"] as? Bool == true { return activity.ended(failed: true) }
             // Claude's own notices name a model in angle brackets.
-            if let model = message["model"] as? String, !model.hasPrefix("<") { activity.model = model }
+            if let model = message["model"] as? String, !model.hasPrefix("<") {
+                activity.model = model
+                if let usage = message["usage"] as? [String: Any] {
+                    let held = ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"]
+                        .reduce(0) { $0 + AgentLogParser.int(usage[$1]) }
+                    if held > 0 { activity.context = held }
+                }
+            }
             for item in items {
                 switch item["type"] as? String {
                 case "tool_use":
@@ -429,6 +440,16 @@ enum AgentActivitySupport {
             activity.replied(payload["last_agent_message"] as? String)
             // A turn that broke off still completes, naming its error.
             activity.ended(failed: payload["error"] is [String: Any])
+        case ("event_msg", "token_count"):
+            // The input counts what came from the cache too.
+            let info = payload["info"] as? [String: Any]
+            if let last = info?["last_token_usage"] as? [String: Any] {
+                let total = AgentLogParser.int(last["total_tokens"])
+                let held = total > 0 ? total : AgentLogParser.int(last["input_tokens"]) + AgentLogParser.int(last["output_tokens"])
+                if held > 0 { activity.context = held }
+            }
+            let window = AgentLogParser.int(info?["model_context_window"])
+            if window > 0 { activity.contextWindow = window }
         case ("event_msg", "turn_aborted"):
             activity.ended(failed: false)
         case ("event_msg", "error"):

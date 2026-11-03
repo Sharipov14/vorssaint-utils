@@ -401,6 +401,12 @@ enum AgentFormat {
         return rounded.formatted(.number.precision(.fractionLength(0...digits)).locale(locale))
     }
 
+    /// The context a session holds: "65K", or "65K · 24%" where its window is known.
+    static func context(_ held: Int, window: Int?, locale: Locale = .autoupdatingCurrent) -> String {
+        guard let window, window > 0 else { return tokens(held, locale: locale) }
+        return tokens(held, locale: locale) + " \u{00B7} " + percent(Double(held) / Double(window), locale: locale)
+    }
+
     static func percent(_ fraction: Double, locale: Locale = .autoupdatingCurrent) -> String {
         let value = fraction.isFinite ? min(1, max(0, fraction)) : 0
         return value.formatted(.percent.precision(.fractionLength(0)).locale(locale))

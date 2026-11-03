@@ -117,6 +117,10 @@ extension AgentSession {
 
     /// A subagent's time stops once it is done.
     fileprivate var isDone: Bool { isSubagent && status == .waiting }
+
+    fileprivate func heldContext(_ locale: Locale) -> String? {
+        activity?.context.map { AgentFormat.context($0, window: activity?.contextWindow, locale: locale) }
+    }
 }
 
 /// The square a card starts with: the app the session runs in, the agent's
@@ -178,7 +182,8 @@ private struct NotchAgentSessionPlaque: View {
     }
 }
 
-/// The status dot and how long the session has run, in the agent's color.
+/// The status dot and how long the session has run, in the agent's color;
+/// under it, the context the session holds.
 private struct NotchAgentSessionClock: View {
     let session: AgentSession
     let now: Date
@@ -186,10 +191,30 @@ private struct NotchAgentSessionClock: View {
     var size: CGFloat = 13
     /// As wide as the longest usual time, so the dots of a column line up.
     var reserves = true
+    @Environment(\.locale) private var locale
 
     var body: some View {
+        VStack(alignment: .trailing, spacing: 2) {
+            time
+            if let held = session.heldContext(locale) {
+                HStack(spacing: 3) {
+                    Image(systemName: "brain").font(.system(size: max(9, size - 4))).foregroundStyle(.tertiary)
+                    Text(held).monospacedDigit()
+                }
+                .font(.system(size: max(10, size - 2.5)))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .help(text.context(held))
+            }
+        }
+        .fixedSize()
+    }
+
+    private var time: some View {
         HStack(spacing: 5) {
-            Group {
+            // Over a blank, so the time's baseline is the row's: the pulse,
+            // an AppKit view, has a baseline of its own.
+            Color.clear.frame(width: 10, height: 10).overlay {
                 if session.status == .working {
                     NotchAgentPulse(tint: session.kind.tint, size: 4)
                 } else if session.status == .asking {
@@ -198,7 +223,6 @@ private struct NotchAgentSessionClock: View {
                     Circle().fill(.white.opacity(0.28)).frame(width: 7, height: 7)
                 }
             }
-            .frame(width: 10, height: 10)
             ZStack(alignment: .trailing) {
                 if reserves { Text("00:00:00").hidden() }
                 Text(session.elapsed(now)).foregroundStyle(session.isDone ? AnyShapeStyle(.secondary) : AnyShapeStyle(session.kind.tint))
@@ -207,7 +231,6 @@ private struct NotchAgentSessionClock: View {
             .monospacedDigit()
             .lineLimit(1)
         }
-        .fixedSize()
         .help(statusText)
     }
 
@@ -282,18 +305,55 @@ extension NotchAgentCapsule where Icon == EmptyView {
     }
 }
 
-/// The last minute of the session's CPU, drawn low behind a card's foot.
+/// The last minute of the session's CPU, drawn low behind a card's foot: a
+/// smooth line over a tinted fill, both fading out toward the older samples.
 private struct NotchAgentLoadWave: View {
     let session: AgentSession
 
     var body: some View {
         if session.load.count >= 2 {
-            Sparkline(values: session.load, color: session.kind.tint, maxValue: max(session.load.max() ?? 0, 20),
-                      fillOpacity: 0.32, lineWidth: 1)
-                .opacity(0.75)
-                .accessibilityHidden(true)
-                .allowsHitTesting(false)
+            let tint = session.kind.tint
+            let peak = max(session.load.max() ?? 0, 20)
+            ZStack {
+                NotchAgentWave(values: session.load, peak: peak, closed: true)
+                    .fill(LinearGradient(colors: [tint.opacity(0.42), tint.opacity(0.04)], startPoint: .top, endPoint: .bottom))
+                NotchAgentWave(values: session.load, peak: peak, closed: false)
+                    .stroke(tint, style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+            }
+            .mask(LinearGradient(colors: [.clear, .black.opacity(0.7), .black], startPoint: .leading, endPoint: .trailing))
+            .accessibilityHidden(true)
+            .allowsHitTesting(false)
         }
+    }
+}
+
+/// Samples joined by curves through their midpoints, closed down to the
+/// bottom edge for a fill.
+private struct NotchAgentWave: Shape {
+    let values: [Double]
+    let peak: Double
+    let closed: Bool
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        guard values.count >= 2 else { return path }
+        // A little room above, so the line at its peak is not cut.
+        let top = rect.minY + 2
+        let points = values.enumerated().map { index, value in
+            CGPoint(x: rect.minX + rect.width * CGFloat(index) / CGFloat(values.count - 1),
+                    y: rect.maxY - (rect.maxY - top) * CGFloat(min(1, max(0, value / peak))))
+        }
+        path.move(to: points[0])
+        for (point, next) in zip(points, points.dropFirst()) {
+            path.addQuadCurve(to: CGPoint(x: (point.x + next.x) / 2, y: (point.y + next.y) / 2), control: point)
+        }
+        path.addLine(to: points[points.count - 1])
+        if closed {
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+            path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+            path.closeSubpath()
+        }
+        return path
     }
 }
 
@@ -302,6 +362,7 @@ private struct NotchAgentSessionAccessibility: ViewModifier {
     let session: AgentSession
     let context: NotchAgentSessionContext
     let open: Bool
+    @Environment(\.locale) private var locale
 
     func body(content: Content) -> some View {
         let text = context.text
@@ -312,7 +373,8 @@ private struct NotchAgentSessionAccessibility: ViewModifier {
                                  session.isSubagent ? "" : session.host?.name ?? text.background, session.shownName,
                                  session.task ?? "", text.activity(of: session) ?? text.state(of: session)]
                 .filter { !$0.isEmpty }.joined(separator: ", "))
-            .accessibilityValue(session.elapsed(context.now))
+            .accessibilityValue([session.elapsed(context.now), session.heldContext(locale).map(text.context) ?? ""]
+                .filter { !$0.isEmpty }.joined(separator: ", "))
             .accessibilityAddTraits(open ? .isSelected : [])
             // VoiceOver reaches opening and ending without revealing their buttons.
             .accessibilityActions {
@@ -741,6 +803,8 @@ private struct NotchAgentSessionGrid: View {
                         }
                     }
                 }
+                // A row is as tall as its tallest tile.
+                .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -754,7 +818,7 @@ private struct NotchAgentSessionTile: View {
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
         NotchAgentCardButton(action: flip) {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 0) {
                 HStack(alignment: .top, spacing: 9) {
                     NotchAgentSessionPlaque(session: session, size: 34)
                     VStack(alignment: .leading, spacing: 4) {
@@ -763,7 +827,7 @@ private struct NotchAgentSessionTile: View {
                             .lineLimit(1)
                             .truncationMode(.middle)
                         // The name has the row to itself; the time goes by the state.
-                        HStack(spacing: 4) {
+                        HStack(alignment: .firstTextBaseline, spacing: 4) {
                             NotchAgentCapsule(title: context.text.state(of: session),
                                               tint: session.status == .asking ? .orange : .white)
                             Spacer(minLength: 2)
@@ -771,6 +835,7 @@ private struct NotchAgentSessionTile: View {
                         }
                     }
                 }
+                Spacer(minLength: 10)
                 HStack(spacing: 6) {
                     if session.memory > 0 { NotchAgentMemory(bytes: session.memory) }
                     Spacer(minLength: 4)
@@ -780,9 +845,9 @@ private struct NotchAgentSessionTile: View {
                 }
             }
             .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(alignment: .bottomTrailing) {
-                NotchAgentLoadWave(session: session).frame(height: 30).padding(.leading, 50)
+                NotchAgentLoadWave(session: session).frame(height: 38).padding(.leading, 40)
             }
             .clipShape(shape)
             .help(session.host?.name ?? context.text.background)
@@ -854,7 +919,7 @@ private struct NotchAgentWideTile: View {
         // Behind the header, as long as no tiles of subagents sit under it.
         .background(alignment: .topTrailing) {
             if group.children.isEmpty {
-                NotchAgentLoadWave(session: session).frame(width: context.width * 0.55, height: 44).opacity(0.5)
+                NotchAgentLoadWave(session: session).frame(width: context.width * 0.55, height: 48).opacity(0.5)
             }
         }
         .clipShape(shape)
@@ -924,6 +989,7 @@ private struct NotchAgentChildTiles: View {
                         ForEach(row.count..<columns, id: \.self) { _ in Color.clear.frame(maxWidth: .infinity).frame(height: 0) }
                     }
                 }
+                .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -951,7 +1017,7 @@ private struct NotchAgentChildTile: View {
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        HStack(spacing: 4) {
+                        HStack(alignment: .firstTextBaseline, spacing: 4) {
                             NotchAgentChildStep(session: session, text: context.text, size: 10.5)
                             Spacer(minLength: 2)
                             NotchAgentSessionClock(session: session, now: context.now, text: context.text, size: 11.5, reserves: false)
@@ -972,7 +1038,7 @@ private struct NotchAgentChildTile: View {
             }
         }
         .padding(9)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .modifier(NotchControlSurface(cornerRadius: 12, selected: open, interactive: false))
         .overlay { shape.strokeBorder(session.kind.tint.opacity(open ? 0.4 : 0)).allowsHitTesting(false) }
     }

@@ -163,6 +163,7 @@ struct NotchAgentStrings {
     let showLess: String
     let changedFilesFormat: String        // + count
     let costFormat: String                // + amount
+    let contextFormat: String             // + tokens held
 
     func tokens(_ count: String) -> String { String(format: tokensFormat, count) }
     func cached(_ share: String) -> String { String(format: cachedFormat, share) }
@@ -173,6 +174,7 @@ struct NotchAgentStrings {
     func subagents(_ count: Int) -> String { String(format: subagentsFormat, count) }
     func changedFiles(_ count: Int) -> String { String(format: changedFilesFormat, count) }
     func cost(_ amount: String) -> String { String(format: costFormat, amount) }
+    func context(_ held: String) -> String { String(format: contextFormat, held) }
     func left(_ share: String) -> String { String(format: leftFormat, share) }
     func usedShare(_ share: String) -> String { String(format: usedFormat, share) }
     func updated(_ when: String) -> String { String(format: updatedFormat, when) }
@@ -452,7 +454,8 @@ extension NotchAgentStrings {
         showAll: "Show all",
         showLess: "Show less",
         changedFilesFormat: "Files changed: %d",
-        costFormat: "Cost: %@")
+        costFormat: "Cost: %@",
+        contextFormat: "Context: %@")
 
     static let uk = NotchAgentStrings(
         title: "ШІ-агенти",
@@ -604,7 +607,8 @@ extension NotchAgentStrings {
         showAll: "Показати все",
         showLess: "Згорнути",
         changedFilesFormat: "Змінено файлів: %d",
-        costFormat: "Вартість: %@")
+        costFormat: "Вартість: %@",
+        contextFormat: "Контекст: %@")
 
     static let ptBR = NotchAgentStrings(
         title: "Agentes de IA",
@@ -756,7 +760,8 @@ extension NotchAgentStrings {
         showAll: "Mostrar tudo",
         showLess: "Mostrar menos",
         changedFilesFormat: "Arquivos alterados: %d",
-        costFormat: "Custo: %@")
+        costFormat: "Custo: %@",
+        contextFormat: "Contexto: %@")
 
     static let es = NotchAgentStrings(
         title: "Agentes de IA",
@@ -908,7 +913,8 @@ extension NotchAgentStrings {
         showAll: "Mostrar todo",
         showLess: "Mostrar menos",
         changedFilesFormat: "Archivos cambiados: %d",
-        costFormat: "Coste: %@")
+        costFormat: "Coste: %@",
+        contextFormat: "Contexto: %@")
 
     static let sk = NotchAgentStrings(
         title: "AI agenti",
@@ -1060,7 +1066,8 @@ extension NotchAgentStrings {
         showAll: "Zobraziť všetko",
         showLess: "Zobraziť menej",
         changedFilesFormat: "Zmenené súbory: %d",
-        costFormat: "Cena: %@")
+        costFormat: "Cena: %@",
+        contextFormat: "Kontext: %@")
 
     static let de = NotchAgentStrings(
         title: "KI-Agenten",
@@ -1212,7 +1219,8 @@ extension NotchAgentStrings {
         showAll: "Alle zeigen",
         showLess: "Weniger zeigen",
         changedFilesFormat: "Geänderte Dateien: %d",
-        costFormat: "Kosten: %@")
+        costFormat: "Kosten: %@",
+        contextFormat: "Kontext: %@")
 
     static let fr = NotchAgentStrings(
         title: "Agents IA",
@@ -1364,7 +1372,8 @@ extension NotchAgentStrings {
         showAll: "Tout afficher",
         showLess: "Afficher moins",
         changedFilesFormat: "Fichiers modifiés\u{00A0}: %d",
-        costFormat: "Coût\u{00A0}: %@")
+        costFormat: "Coût\u{00A0}: %@",
+        contextFormat: "Contexte\u{00A0}: %@")
 
     static let it = NotchAgentStrings(
         title: "Agenti IA",
@@ -1516,7 +1525,8 @@ extension NotchAgentStrings {
         showAll: "Mostra tutto",
         showLess: "Mostra meno",
         changedFilesFormat: "File modificati: %d",
-        costFormat: "Costo: %@")
+        costFormat: "Costo: %@",
+        contextFormat: "Contesto: %@")
 
     static let ru = NotchAgentStrings(
         title: "ИИ-агенты",
@@ -1668,7 +1678,8 @@ extension NotchAgentStrings {
         showAll: "Показать всё",
         showLess: "Свернуть",
         changedFilesFormat: "Изменено файлов: %d",
-        costFormat: "Стоимость: %@")
+        costFormat: "Стоимость: %@",
+        contextFormat: "Контекст: %@")
 
     static let tr = NotchAgentStrings(
         title: "YZ Ajanları",
@@ -1820,7 +1831,8 @@ extension NotchAgentStrings {
         showAll: "Tümünü göster",
         showLess: "Daha az göster",
         changedFilesFormat: "Değişen dosyalar: %d",
-        costFormat: "Maliyet: %@")
+        costFormat: "Maliyet: %@",
+        contextFormat: "Bağlam: %@")
 
     static let ja = NotchAgentStrings(
         title: "AIエージェント",
@@ -1972,7 +1984,8 @@ extension NotchAgentStrings {
         showAll: "すべて表示",
         showLess: "表示を減らす",
         changedFilesFormat: "変更ファイル %d",
-        costFormat: "コスト %@")
+        costFormat: "コスト %@",
+        contextFormat: "コンテキスト %@")
 
     static let ko = NotchAgentStrings(
         title: "AI 에이전트",
@@ -2124,7 +2137,8 @@ extension NotchAgentStrings {
         showAll: "모두 보기",
         showLess: "간단히 보기",
         changedFilesFormat: "변경된 파일 %d개",
-        costFormat: "비용 %@")
+        costFormat: "비용 %@",
+        contextFormat: "컨텍스트 %@")
 
     static let zhHans = NotchAgentStrings(
         title: "AI 智能体",
@@ -2276,7 +2290,8 @@ extension NotchAgentStrings {
         showAll: "显示全部",
         showLess: "收起",
         changedFilesFormat: "已更改 %d 个文件",
-        costFormat: "费用 %@")
+        costFormat: "费用 %@",
+        contextFormat: "上下文 %@")
 
     static let zhTW = NotchAgentStrings(
         title: "AI 代理",
@@ -2428,7 +2443,8 @@ extension NotchAgentStrings {
         showAll: "顯示全部",
         showLess: "收合",
         changedFilesFormat: "已變更 %d 個檔案",
-        costFormat: "費用 %@")
+        costFormat: "費用 %@",
+        contextFormat: "上下文 %@")
 
     static let zhHK = NotchAgentStrings(
         title: "AI 代理",
@@ -2580,5 +2596,6 @@ extension NotchAgentStrings {
         showAll: "顯示全部",
         showLess: "收合",
         changedFilesFormat: "已更改 %d 個檔案",
-        costFormat: "費用 %@")
+        costFormat: "費用 %@",
+        contextFormat: "上下文 %@")
 }
