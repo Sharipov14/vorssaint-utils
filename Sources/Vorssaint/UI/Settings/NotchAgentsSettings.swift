@@ -141,6 +141,10 @@ struct NotchAgentsSettingsControls: View {
                 Toggle(text.priceUpdates, isOn: $priceUpdates).labelsHidden().toggleStyle(.switch)
             }
 
+            Divider()
+            Text(FeatureStrings.notchChat(l10n.language).title).font(.subheadline.weight(.medium))
+            NotchChatSettingsControls()
+
             if claude {
                 Divider()
                 Text(text.claudeLimitsTitle).font(.subheadline.weight(.medium))
