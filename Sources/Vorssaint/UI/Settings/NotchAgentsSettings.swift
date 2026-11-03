@@ -21,7 +21,6 @@ struct NotchAgentsSettingsControls: View {
     @AppStorage(DefaultsKey.notchAgentsLiveActivity) private var liveActivity = true
     @AppStorage(DefaultsKey.notchAgentsReadout) private var readout = NotchAgentReadout.elapsed.rawValue
     @AppStorage(DefaultsKey.notchAgentsFinishAlert) private var finishAlert = true
-    @AppStorage(DefaultsKey.notchAgentsFinishMinimum) private var finishMinimum = NotchAgentSupport.defaultFinishMinimum
     @AppStorage(DefaultsKey.notchAgentsLimitAlert) private var limitAlert = true
     @AppStorage(DefaultsKey.notchAgentsLimitThreshold) private var limitThreshold = NotchAgentSupport.defaultLimitThreshold
     @AppStorage(DefaultsKey.notchAgentsDailyBudget) private var dailyBudget = 0.0
@@ -112,15 +111,6 @@ struct NotchAgentsSettingsControls: View {
             Divider()
             Text(text.alerts).font(.subheadline.weight(.medium))
             switchRow("checkmark.circle", text.finishAlert, isOn: $finishAlert)
-            if finishAlert {
-                SettingsMenuRow(symbol: "timer", title: text.finishAfter, selection: $finishMinimum) {
-                    ForEach(NotchAgentSupport.finishMinimums, id: \.self) { seconds in
-                        Text(seconds == 0 ? text.anyLength : AgentFormat.duration(seconds, locale: locale, style: .short))
-                            .tag(seconds)
-                    }
-                }
-                .padding(.leading, settingsRowTextInset)
-            }
             switchRow("exclamationmark.triangle", text.limitAlert, isOn: $limitAlert)
             if limitAlert {
                 SettingsMenuRow(symbol: "gauge.with.dots.needle.67percent", title: text.limitAt, selection: $limitThreshold) {

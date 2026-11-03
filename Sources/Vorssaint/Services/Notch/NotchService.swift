@@ -4298,8 +4298,7 @@ final class NotchService: ObservableObject {
                 // After the notice, the companion cheers the finished task.
                 self?.reactMascot(.celebrate)
             }
-            // Claude's and Codex's logs keep the last reply, which their card shows.
-            guard provider == .claude || provider == .codex else { return notice() }
+            // Which way it is told, if at all, waits on a look at the sessions.
             AgentApprovalService.shared.finish(provider, log: file, project: project) { notice() }
         case .limitWarning(let provider, let limit):
             show(NotchNotice(event: .agents, title: "\(provider.displayName) · \(window(limit))",
