@@ -344,6 +344,27 @@ enum AgentSessionsTests {
                         && AgentSessionsSupport.columns(width: 300, minimum: 124, spacing: 6) == 2
                         && AgentSessionsSupport.columns(width: 40, minimum: 124, spacing: 6) == 1,
                      "a row holds as many tiles as fit, and at least one")
+        var running = AgentActivity()
+        running.state = .running
+        var finished = AgentActivity()
+        finished.state = .finished
+        var failed = AgentActivity()
+        failed.state = .failed
+        let app = AgentHost(pid: 1, name: "Terminal")
+        func tone(_ status: AgentSession.Status, _ activity: AgentActivity?, kind: AgentProcessKind = .claude,
+                  pid: Int32 = 1, host: AgentHost? = app) -> AgentSession.Tone {
+            AgentSessionsSupport.tone(of: AgentSession(id: "s", kind: kind, pid: pid, identity: UInt64(pid), status: status,
+                                                       host: host, activity: activity))
+        }
+        suite.expect(tone(.asking, running) == .asking && tone(.working, running) == .working && tone(.working, finished) == .done
+                        && tone(.waiting, running) == .done && tone(.waiting, running, kind: .codex) == .working
+                        && tone(.waiting, failed) == .idle,
+                     "a session's tone follows the word its state says: asking, at work, or done")
+        suite.expect(tone(.working, nil) == .working && tone(.waiting, nil) == .done && tone(.waiting, nil, host: nil) == .idle
+                        && tone(.working, nil, host: nil) == .idle,
+                     "with no log, a session in an app is done once idle, one in the background says nothing")
+        suite.expect(tone(.waiting, running, pid: 0, host: nil) == .done && tone(.working, running, pid: 0, host: nil) == .working,
+                     "a subagent is done once it stops")
         let minute = (0..<40).reduce([Double]()) { AgentSessionsSupport.load($0, adding: Double($1)) }
         suite.expect(minute.count == AgentSessionsSupport.loadSamples && minute.last == 39 && minute.first == 10,
                      "a session's CPU history keeps its last minute, the newest last")

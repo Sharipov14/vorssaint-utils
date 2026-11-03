@@ -112,6 +112,19 @@ extension AgentSession {
     fileprivate func heldContext(_ locale: Locale) -> String? {
         activity?.context.map { AgentFormat.context($0, window: activity?.contextWindow, locale: locale) }
     }
+
+    /// At work in blue, waiting on the person in amber, done in green; nil
+    /// where nothing is known either way.
+    fileprivate var toneColor: Color? {
+        switch AgentSessionsSupport.tone(of: self) {
+        case .working: return Color(red: 0.36, green: 0.64, blue: 1)
+        case .asking: return Color(red: 1, green: 0.62, blue: 0.22)
+        case .done: return Color(red: 0.3, green: 0.82, blue: 0.46)
+        case .idle: return nil
+        }
+    }
+
+    fileprivate var toneStyle: AnyShapeStyle { toneColor.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.secondary) }
 }
 
 /// The square a card starts with: the app the session runs in, the agent's
@@ -206,17 +219,15 @@ private struct NotchAgentSessionClock: View {
             // Over a blank, so the time's baseline is the row's: the pulse,
             // an AppKit view, has a baseline of its own.
             Color.clear.frame(width: 10, height: 10).overlay {
-                if session.status == .working {
-                    NotchAgentPulse(tint: session.kind.tint, size: 4)
-                } else if session.status == .asking {
-                    Circle().fill(.orange).frame(width: 7, height: 7)
+                if AgentSessionsSupport.tone(of: session) == .working {
+                    NotchAgentPulse(tint: session.toneColor ?? session.kind.tint, size: 4)
                 } else {
-                    Circle().fill(.white.opacity(0.28)).frame(width: 7, height: 7)
+                    Circle().fill(session.toneColor ?? .white.opacity(0.28)).frame(width: 7, height: 7)
                 }
             }
             ZStack(alignment: .trailing) {
                 if reserves { Text("00:00:00").hidden() }
-                Text(session.elapsed(now)).foregroundStyle(session.isDone ? AnyShapeStyle(.secondary) : AnyShapeStyle(session.kind.tint))
+                Text(session.elapsed(now)).foregroundStyle(session.toneStyle)
             }
             .font(.system(size: size, weight: .semibold))
             .monospacedDigit()
@@ -238,20 +249,36 @@ private struct NotchAgentSessionClock: View {
 private struct NotchAgentSquareButton: View {
     let symbol: String
     let label: String
+    var tint: Color?
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 10.5, weight: .bold))
-                .foregroundStyle(.white.opacity(0.78))
+                .foregroundStyle(tint ?? .white.opacity(0.78))
                 .frame(width: 26, height: 26)
-                .background(.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background((tint ?? .white).opacity(tint == nil ? 0.1 : 0.18), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(NotchButtonStyle(cornerRadius: 8))
         .help(label)
         .accessibilityLabel(label)
+    }
+}
+
+/// Ends a session, in red, in the header of its opened card.
+private struct NotchAgentEndButton: View {
+    let session: AgentSession
+    let context: NotchAgentSessionContext
+
+    var body: some View {
+        if context.canEnd && !session.isSubagent {
+            NotchAgentSquareButton(symbol: "xmark", label: context.text.endSession(session.kind.displayName + " " + session.shownName),
+                                   tint: Color(red: 1, green: 0.36, blue: 0.34)) {
+                AgentSessionsService.shared.kill(session)
+            }
+        }
     }
 }
 
@@ -414,27 +441,21 @@ private struct NotchAgentSessionDetails: View {
         context.turn(of: session).flatMap { $0.cost > 0 ? AgentFormat.cost($0.cost, locale: locale) : nil }
     }
 
-    static func hasContent(_ session: AgentSession, context: NotchAgentSessionContext) -> Bool {
+    static func hasContent(_ session: AgentSession, context: NotchAgentSessionContext, showsModel: Bool = true) -> Bool {
         let activity = session.activity
-        return activity?.prompt != nil || activity?.reply != nil || activity?.files.isEmpty == false || activity?.model != nil
-            || context.turn(of: session) != nil || (context.canEnd && !session.isSubagent)
+        return activity?.prompt != nil || activity?.reply != nil || activity?.files.isEmpty == false
+            || (showsModel && (activity?.model != nil || context.turn(of: session) != nil))
     }
 
     var body: some View {
         let activity = session.activity
         let files = activity?.files ?? []
         VStack(alignment: .leading, spacing: 8) {
-            if (showsModel && (model != nil || cost != nil)) || (context.canEnd && !session.isSubagent) {
+            if showsModel && (model != nil || cost != nil) {
                 HStack(spacing: 10) {
-                    if showsModel, let model { fact(nil, model) }
-                    if showsModel, model != nil, cost != nil { Rectangle().fill(.white.opacity(0.12)).frame(width: 1, height: 14) }
-                    if showsModel, let cost { fact("dollarsign.circle", text.cost(cost)) }
-                    Spacer(minLength: 4)
-                    if context.canEnd && !session.isSubagent {
-                        NotchAgentSquareButton(symbol: "xmark", label: text.endSession(session.kind.displayName + " " + session.shownName)) {
-                            AgentSessionsService.shared.kill(session)
-                        }
-                    }
+                    if let model { fact(nil, model) }
+                    if model != nil, cost != nil { Rectangle().fill(.white.opacity(0.12)).frame(width: 1, height: 14) }
+                    if let cost { fact("dollarsign.circle", text.cost(cost)) }
                 }
             }
             if activity?.prompt != nil || activity?.reply != nil { actions(activity) }
@@ -540,7 +561,7 @@ private struct NotchAgentChildStep: View {
     var body: some View {
         HStack(spacing: 4) {
             if session.isDone {
-                Image(systemName: "checkmark").font(.system(size: size - 2, weight: .bold)).foregroundStyle(.green)
+                Image(systemName: "checkmark").font(.system(size: size - 2, weight: .bold))
                 Text(text.done)
             } else {
                 // The target goes first where the room is short, then the verb is cut.
@@ -548,12 +569,11 @@ private struct NotchAgentChildStep: View {
                     Text(text.activity(of: session) ?? text.state(of: session)).fixedSize()
                     Text(text.state(of: session))
                 }
-                .foregroundStyle(session.status == .asking ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
                 .help(text.activity(of: session) ?? text.state(of: session))
             }
         }
         .font(.system(size: size))
-        .foregroundStyle(.secondary)
+        .foregroundStyle(session.toneStyle)
         .lineLimit(1)
         .truncationMode(.tail)
     }
@@ -587,10 +607,12 @@ private struct NotchAgentListCard: View {
             if open {
                 Group {
                     if group.children.isEmpty {
-                        NotchAgentSessionDetails(session: session, context: context)
-                            .padding(.leading, Self.inset + Self.plaque + 10)
-                            .padding(.trailing, Self.inset)
-                            .padding(.bottom, 10)
+                        if NotchAgentSessionDetails.hasContent(session, context: context) {
+                            NotchAgentSessionDetails(session: session, context: context)
+                                .padding(.leading, Self.inset + Self.plaque + 10)
+                                .padding(.trailing, Self.inset)
+                                .padding(.bottom, 10)
+                        }
                     } else {
                         VStack(alignment: .leading, spacing: 6) {
                             tree
@@ -611,8 +633,10 @@ private struct NotchAgentListCard: View {
         .overlay { shape.strokeBorder(session.kind.tint.opacity(open ? 0.45 : 0)).allowsHitTesting(false) }
     }
 
-    /// Opening is always at hand; a card with nothing to open keeps its time in the column.
+    /// Opening is always at hand; a card with nothing to open keeps its time in
+    /// the column. Opened, the card can end the session.
     @ViewBuilder private var trailing: some View {
+        if open { NotchAgentEndButton(session: session, context: context) }
         if let host = session.host {
             NotchAgentSquareButton(symbol: "arrow.up.forward", label: text.showIn(host.name)) {
                 NotchAgentSessionActions.show(session)
@@ -655,15 +679,18 @@ private struct NotchAgentListCard: View {
         Rectangle().fill(.white.opacity(0.1)).frame(width: 1, height: 26).accessibilityHidden(true)
     }
 
-    /// Where it runs and what it does; with subagents, how many, and which way the card folds.
+    /// Where it runs and what it does, in its tone; with subagents, how many,
+    /// and which way the card folds.
     private var subtitle: some View {
         let activity = text.activity(of: session)
+        let state = (group.children.isEmpty ? activity : activity ?? text.state(of: session))
+            .map { Text($0).foregroundStyle(session.toneStyle) }
         let parts = group.children.isEmpty
-            ? [session.host?.name ?? text.background, activity].compactMap { $0 }
-            : [activity ?? text.state(of: session), text.subagents(group.children.count)]
+            ? [Text(session.host?.name ?? text.background), state]
+            : [state, Text(text.subagents(group.children.count))]
         return HStack(spacing: 3) {
-            Text(parts.joined(separator: " \u{00B7} "))
-                .foregroundStyle(session.status == .asking ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
+            (parts.compactMap { $0 }.reduce(nil as Text?) { line, part in line.map { $0 + Text(" \u{00B7} ") + part } ?? part } ?? Text(""))
+                .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
             if !group.children.isEmpty {
@@ -769,13 +796,17 @@ private struct NotchAgentChildDetails: View {
         let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                Text(session.shownName).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(session.kind.tint)
-                if let task = session.task {
-                    Text(task).font(.system(size: 11)).foregroundStyle(.secondary).truncationMode(.tail)
+                Group {
+                    Text(session.shownName).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(session.kind.tint)
+                    if let task = session.task {
+                        Text(task).font(.system(size: 11)).foregroundStyle(.secondary).truncationMode(.tail)
+                    }
                 }
+                .lineLimit(1)
+                .accessibilityAddTraits(.isHeader)
+                Spacer(minLength: 4)
+                NotchAgentEndButton(session: session, context: context)
             }
-            .lineLimit(1)
-            .accessibilityAddTraits(.isHeader)
             if NotchAgentSessionDetails.hasContent(session, context: context) {
                 NotchAgentSessionDetails(session: session, context: context)
             }
@@ -848,14 +879,19 @@ private struct NotchAgentSessionTile: View {
                 HStack(alignment: .top, spacing: 9) {
                     NotchAgentSessionPlaque(session: session, size: 34)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(session.shownName)
-                            .font(.system(size: 13, weight: .semibold))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        // The name has the row to itself; the time goes by the state.
+                        // The name shares its row with the way to the session's window,
+                        // laid over the card; the time goes by the state, under it.
+                        HStack(spacing: 4) {
+                            Text(session.shownName)
+                                .font(.system(size: 13, weight: .semibold))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Spacer(minLength: 4)
+                            // Kept with no window to go to, so the times of a row line up.
+                            Color.clear.frame(width: 26, height: 26)
+                        }
                         HStack(alignment: .firstTextBaseline, spacing: 4) {
-                            NotchAgentCapsule(title: context.text.state(of: session),
-                                              tint: session.status == .asking ? .orange : .white)
+                            NotchAgentCapsule(title: context.text.state(of: session), tint: session.toneColor ?? .white)
                             Spacer(minLength: 2)
                             NotchAgentSessionClock(session: session, now: context.now, text: context.text, size: 12, reserves: false)
                         }
@@ -879,6 +915,15 @@ private struct NotchAgentSessionTile: View {
             .help(session.host?.name ?? context.text.background)
         }
         .modifier(NotchAgentSessionAccessibility(session: session, context: context, open: false))
+        .overlay(alignment: .topTrailing) {
+            if let host = session.host {
+                NotchAgentSquareButton(symbol: "arrow.up.forward", label: context.text.showIn(host.name)) {
+                    NotchAgentSessionActions.show(session)
+                }
+                .disabled(context.preview)
+                .padding(10)
+            }
+        }
         .modifier(NotchControlSurface(cornerRadius: 14, interactive: false))
     }
 }
@@ -908,6 +953,7 @@ private struct NotchAgentWideTile: View {
             HStack(alignment: .center, spacing: 8) {
                 NotchAgentCardButton(action: { context.flip(group) }) { header }
                     .modifier(NotchAgentSessionAccessibility(session: session, context: context, open: open))
+                if open { NotchAgentEndButton(session: session, context: context) }
                 if let host = session.host {
                     NotchAgentSquareButton(symbol: "arrow.up.forward", label: text.showIn(host.name)) {
                         NotchAgentSessionActions.show(session)
@@ -928,7 +974,7 @@ private struct NotchAgentWideTile: View {
                 .padding(.leading, 46)
                 .padding(.top, -2)
             }
-            if open {
+            if open && (!group.children.isEmpty || NotchAgentSessionDetails.hasContent(session, context: context, showsModel: false)) {
                 Group {
                     Rectangle().fill(.white.opacity(0.08)).frame(height: 1)
                     if group.children.isEmpty {
@@ -968,7 +1014,7 @@ private struct NotchAgentWideTile: View {
                         .truncationMode(.middle)
                     NotchAgentPorts(session: session)
                 }
-                NotchAgentCapsule(title: text.state(of: session), tint: session.status == .asking ? .orange : .white)
+                NotchAgentCapsule(title: text.state(of: session), tint: session.toneColor ?? .white)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             NotchAgentSessionClock(session: session, now: context.now, text: text, reserves: false)

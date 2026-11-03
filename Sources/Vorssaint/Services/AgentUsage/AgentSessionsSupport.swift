@@ -98,6 +98,9 @@ struct AgentPort: Hashable {
 struct AgentSession: Identifiable, Equatable {
     /// `waiting` is idle; `asking` waits on the person.
     enum Status { case working, waiting, asking }
+    /// What its time and state are colored by: at work, waiting on the
+    /// person, done with its turn, or nothing known either way.
+    enum Tone { case working, asking, done, idle }
 
     let id: String
     let kind: AgentProcessKind
@@ -344,6 +347,23 @@ enum AgentSessionsSupport {
         return AgentSubagent(id: id, name: name, task: type == nil ? nil : task, lastActivity: lastActivity,
                              finished: meta.finished == true || meta.stoppedByUser == true,
                              background: meta.requestShape == "background")
+    }
+
+    /// The tone of the word `NotchAgentStrings.state(of:)` gives the session.
+    /// A failed turn, and a session in the background with no log, are neither
+    /// at work nor done.
+    static func tone(of session: AgentSession) -> AgentSession.Tone {
+        if session.status == .asking { return .asking }
+        if session.isSubagent && session.status == .waiting { return .done }
+        guard let activity = session.activity, let state = activity.state else {
+            return session.background ? .idle : session.status == .working ? .working : .done
+        }
+        if activity.inTurn && session.kind == .claude && session.status == .waiting { return .done }
+        switch state {
+        case .thinking, .running: return .working
+        case .finished: return .done
+        case .failed: return .idle
+        }
     }
 
     /// One in the background works until Claude marks it done, as it may
