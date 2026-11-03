@@ -113,14 +113,13 @@ extension AgentSession {
         activity?.context.map { AgentFormat.context($0, window: activity?.contextWindow, locale: locale) }
     }
 
-    /// At work in blue, waiting on the person in amber, done in green; nil
-    /// where nothing is known either way.
+    /// At work in green, waiting on the person in amber; nil, so gray, once
+    /// done or where nothing is known either way.
     fileprivate var toneColor: Color? {
         switch AgentSessionsSupport.tone(of: self) {
-        case .working: return Color(red: 0.36, green: 0.64, blue: 1)
+        case .working: return Color(red: 0.3, green: 0.82, blue: 0.46)
         case .asking: return Color(red: 1, green: 0.62, blue: 0.22)
-        case .done: return Color(red: 0.3, green: 0.82, blue: 0.46)
-        case .idle: return nil
+        case .done, .idle: return nil
         }
     }
 
