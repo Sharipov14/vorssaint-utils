@@ -27,6 +27,7 @@ struct NotchAgentsView: View {
     @ObservedObject private var l10n = L10n.shared
     @Environment(\.notchSettingsPreview) private var preview
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Namespace private var tabHighlight
     @AppStorage(DefaultsKey.notchAgentsPeriod) private var period = AgentPeriod.today.rawValue
     @AppStorage(DefaultsKey.notchAgentsLimitDisplay) private var display = NotchAgentLimitDisplay.remaining.rawValue
     @AppStorage(DefaultsKey.notchAgentsCardOrder) private var cardOrder = ""
@@ -188,7 +189,13 @@ struct NotchAgentsView: View {
                     .foregroundStyle(.white.opacity(current ? 0.95 : 0.55))
                     .padding(.horizontal, 7)
                     .frame(height: 26)
-                    .background(.white.opacity(current ? 0.14 : 0), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    .background {
+                        if current {
+                            // Its own id per variant: ViewThatFits may build both.
+                            RoundedRectangle(cornerRadius: 9, style: .continuous).fill(.white.opacity(0.14))
+                                .matchedGeometryEffect(id: labeled ? "labeled" : "symbols", in: tabHighlight)
+                        }
+                    }
                     .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                 }
                 .buttonStyle(NotchButtonStyle(cornerRadius: 9))
@@ -197,6 +204,7 @@ struct NotchAgentsView: View {
                 .accessibilityAddTraits(current ? .isSelected : [])
             }
         }
+        .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.82), value: shownTab)
         .fixedSize()
     }
 

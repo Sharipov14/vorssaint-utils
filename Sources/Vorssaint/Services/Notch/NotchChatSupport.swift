@@ -62,6 +62,12 @@ struct ChatMessage: Equatable, Identifiable {
     var text: String
 }
 
+/// A piece of a reply as shown: prose, or a fenced code block.
+enum ChatBlock: Equatable {
+    case text(String)
+    case code(language: String, code: String)
+}
+
 enum ChatStreamEvent: Equatable {
     case text(String)
     case done
@@ -240,5 +246,50 @@ enum NotchChatSupport {
     private static func errorMessage(_ object: [String: Any]) -> String? {
         if let error = object["error"] as? [String: Any] { return error["message"] as? String ?? "" }
         return object["error"] as? String
+    }
+
+    // MARK: Showing a reply
+
+    /// The reply without a reasoning model's `<think>` blocks, one still
+    /// open while it streams included.
+    static func visible(_ text: String) -> String {
+        var rest = Substring(text)
+        var shown = ""
+        while let open = rest.range(of: "<think>") {
+            shown += rest[..<open.lowerBound]
+            guard let close = rest[open.upperBound...].range(of: "</think>") else { rest = ""; break }
+            rest = rest[close.upperBound...]
+        }
+        shown += rest
+        return shown.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Prose and fenced code, in order. A fence not yet closed runs to the
+    /// end, so code streams in as code.
+    static func blocks(_ text: String) -> [ChatBlock] {
+        var blocks: [ChatBlock] = []
+        var lines: [Substring] = []
+        var language: String?
+        func flush() {
+            let joined = lines.joined(separator: "\n")
+            if let language {
+                blocks.append(.code(language: language, code: joined))
+            } else {
+                let prose = joined.trimmingCharacters(in: .newlines)
+                if !prose.trimmingCharacters(in: .whitespaces).isEmpty { blocks.append(.text(prose)) }
+            }
+            lines = []
+        }
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let trimmed = line.drop { $0 == " " }
+            if trimmed.hasPrefix("```") {
+                flush()
+                language = language == nil ? trimmed.dropFirst(3).trimmingCharacters(in: .whitespaces) : nil
+            } else {
+                lines.append(line)
+            }
+        }
+        flush()
+        return blocks
     }
 }

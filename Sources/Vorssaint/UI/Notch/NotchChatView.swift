@@ -115,26 +115,15 @@ struct NotchChatView: View {
                     .background(.white.opacity(0.14), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
         } else {
-            Text(Self.markdown(message.text))
-                .font(.system(size: Self.textSize))
-                .foregroundStyle(.white.opacity(0.9))
-                .tint(.white)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 4)
-                .fixedSize(horizontal: false, vertical: true)
+            NotchChatReply(message: message,
+                           streaming: chat.phase == .streaming && message.id == chat.messages.last?.id,
+                           textSize: Self.textSize)
         }
-    }
-
-    /// Inline Markdown, line breaks kept; text that does not parse shows as written.
-    private static func markdown(_ text: String) -> AttributedString {
-        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
-            ?? AttributedString(text)
     }
 
     private var thinking: some View {
         HStack(spacing: 6) {
-            ProgressView().controlSize(.small).scaleEffect(0.7)
+            NotchChatTypingDots()
             Text(text.thinking).font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
         }
         .padding(.horizontal, 4)
@@ -232,16 +221,25 @@ struct NotchChatBandControls: View {
     @ObservedObject private var l10n = L10n.shared
     @AppStorage(DefaultsKey.notchChatProviders) private var storedProviders = ""
     @AppStorage(DefaultsKey.notchChatModel) private var storedModel = ""
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Lit for a moment when the model changes.
+    @State private var flash = false
     private var text: NotchChatStrings { FeatureStrings.notchChat(l10n.language) }
 
     var body: some View {
         let _ = (storedProviders, storedModel)
+        let current = chat.selection.map { "\($0.provider.id):\($0.model)" }
         HStack(spacing: 2) {
             if let selection = chat.selection {
                 modelMenu(selection)
                 NotchIconButton(symbol: "square.and.pencil", title: text.newChat) { chat.newChat() }
                     .disabled(chat.messages.isEmpty && !chat.isBusy)
             }
+        }
+        .onChange(of: current) { old, _ in
+            guard old != nil, !reduceMotion else { return }
+            flash = true
+            withAnimation(.easeOut(duration: 0.7).delay(0.15)) { flash = false }
         }
     }
 
@@ -268,8 +266,148 @@ struct NotchChatBandControls: View {
             .padding(.horizontal, 7)
             .frame(maxWidth: 170)
             .frame(height: 28)
+            .background(selection.provider.tint.opacity(flash ? 0.35 : 0),
+                        in: RoundedRectangle(cornerRadius: 9, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
         .fixedSize(horizontal: false, vertical: true)
     }
 }
+
+/// An assistant reply: prose as inline Markdown, code in cards of its own,
+/// a model's thinking left out, and a copy button once it is written.
+private struct NotchChatReply: View {
+    let message: ChatMessage
+    let streaming: Bool
+    let textSize: CGFloat
+    @ObservedObject private var l10n = L10n.shared
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hovering = false
+    @State private var copied: String?
+
+    var body: some View {
+        let shown = NotchChatSupport.visible(message.text)
+        let blocks = NotchChatSupport.blocks(shown)
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
+                let last = index == blocks.count - 1
+                switch block {
+                case .text(let prose):
+                    if streaming && last {
+                        cursorText(prose)
+                    } else {
+                        Text(Self.markdown(prose))
+                    }
+                case .code(let language, let code):
+                    codeCard(language: language, code: code)
+                }
+            }
+            // A reasoning model still thinking has nothing to show yet.
+            if blocks.isEmpty, streaming { NotchChatTypingDots() }
+            if !streaming, !shown.isEmpty {
+                copyButton(shown, id: "reply")
+                    .opacity(hovering || copied == "reply" ? 1 : 0)
+            }
+        }
+        .font(.system(size: textSize))
+        .foregroundStyle(.white.opacity(0.9))
+        .tint(.white)
+        .textSelection(.enabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 4)
+        .fixedSize(horizontal: false, vertical: true)
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: hovering)
+    }
+
+    /// The words so far with a cursor after them, blinking unless motion is reduced.
+    private func cursorText(_ prose: String) -> some View {
+        TimelineView(.periodic(from: .now, by: 0.5)) { context in
+            let on = reduceMotion || Int(context.date.timeIntervalSinceReferenceDate * 2) % 2 == 0
+            var cursor = AttributedString(" ▍")
+            cursor.foregroundColor = .white.opacity(on ? 0.7 : 0)
+            return Text(Self.markdown(prose) + cursor)
+        }
+    }
+
+    private func codeCard(language: String, code: String) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text(language.isEmpty ? "code" : language)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.45))
+                Spacer(minLength: 6)
+                if !streaming { copyButton(code, id: code) }
+            }
+            .padding(.leading, 8)
+            .padding(.trailing, 4)
+            .frame(height: 24)
+            ScrollView(.horizontal) {
+                Text(code)
+                    .font(.system(size: textSize - 1, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.88))
+                    .fixedSize()
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 8)
+            }
+            .scrollIndicators(.never)
+        }
+        .background(.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(.white.opacity(0.08)))
+    }
+
+    private func copyButton(_ value: String, id: String) -> some View {
+        let strings = FeatureStrings.clipboard(l10n.language)
+        let done = copied == id
+        return Button {
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.declareVorssaintSource()
+            pasteboard.setString(value, forType: .string)
+            copied = id
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { if copied == id { copied = nil } }
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: done ? "checkmark" : "doc.on.doc")
+                    .contentTransition(.symbolEffect(.replace))
+                Text(done ? strings.copied : strings.copy)
+            }
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(.white.opacity(done ? 0.9 : 0.55))
+            .padding(.horizontal, 6)
+            .frame(height: 20)
+            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(NotchButtonStyle(cornerRadius: 6))
+        .accessibilityLabel(strings.copy)
+    }
+
+    /// Inline Markdown, line breaks kept; text that does not parse shows as written.
+    static func markdown(_ text: String) -> AttributedString {
+        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+            ?? AttributedString(text)
+    }
+}
+
+/// Three dots in a wave while the reply has not started; still ones under Reduce Motion.
+private struct NotchChatTypingDots: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        TimelineView(.animation(paused: reduceMotion)) { context in
+            let time = context.date.timeIntervalSinceReferenceDate
+            HStack(spacing: 3) {
+                ForEach(0..<3) { index in
+                    let wave = reduceMotion ? 0 : max(0, sin((time * 2 * .pi / 1.1) - Double(index) * 0.7))
+                    Circle()
+                        .fill(.white.opacity(0.35 + 0.45 * wave))
+                        .frame(width: 5, height: 5)
+                        .offset(y: -2.5 * wave)
+                }
+            }
+            .frame(height: 12)
+        }
+    }
+}
+

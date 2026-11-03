@@ -10,6 +10,7 @@ enum NotchChatTests {
         streamContracts(suite)
         modelListContracts(suite)
         failureContracts(suite)
+        replyContracts(suite)
     }
 
     private static func body(_ request: URLRequest) -> [String: Any] {
@@ -152,5 +153,20 @@ enum NotchChatTests {
                         && NotchChatSupport.failure(status: 500, body: Data("Внутренняя ошибка\n".utf8)) == .server(500, "Внутренняя ошибка")
                         && NotchChatSupport.failure(status: 502, body: Data()) == .server(502, nil),
                      "a server's error message reaches the person intact, in any language")
+    }
+
+    private static func replyContracts(_ suite: TestSuite) {
+        suite.expect(NotchChatSupport.visible("<think>plan</think>\n\nHello") == "Hello"
+                        && NotchChatSupport.visible("Hi <think>still going") == "Hi"
+                        && NotchChatSupport.visible("<think>a</think>One<think>b</think> two") == "One two"
+                        && NotchChatSupport.visible("plain") == "plain",
+                     "a model's thinking is hidden, closed or still open")
+        let reply = "Run this:\n```swift\nlet a = 1\n  print(a)\n```\nDone."
+        suite.expect(NotchChatSupport.blocks(reply) == [.text("Run this:"), .code(language: "swift", code: "let a = 1\n  print(a)"),
+                                                        .text("Done.")],
+                     "a reply splits into prose and fenced code, indentation kept")
+        suite.expect(NotchChatSupport.blocks("Look\n```\nhalf") == [.text("Look"), .code(language: "", code: "half")]
+                        && NotchChatSupport.blocks("") == [],
+                     "a fence still streaming is already code")
     }
 }
