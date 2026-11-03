@@ -78,8 +78,11 @@ struct AgentSubagent: Equatable {
     let lastActivity: Date
     /// When its log was begun.
     var started: Date?
-    /// Claude marked it done; older versions never do.
+    /// Claude marked it done or the person stopped it; older versions never mark it.
     var finished = false
+    /// Started to run in the background: it outlives the turn that started
+    /// it, and Claude marks it done.
+    var background = false
     /// Its own transcript.
     var log: String?
     /// It wrote lately and is not done (see `subagentIsWorking`).
@@ -233,19 +236,27 @@ enum AgentSessionsSupport {
     /// (which may hold spaces, as the Claude app's does) or else its name, and
     /// its arguments, `argv[0]` first. The Claude app's `disclaimer` wrapper
     /// only names the agent among its arguments, so it is not one. Neither are
-    /// Claude's `daemon` and `bg-pty-host` helpers, or the `app-server` and
+    /// Claude's daemon, its workers and pty hosts, the MCP servers and the
+    /// Chrome host Claude runs of itself, or the `app-server` and
     /// `mcp-server` Codex runs for the apps that host it.
     static func kind(executablePath: String?, comm: String = "", argv: [String]) -> AgentProcessKind? {
         guard let (found, rest) = identify(executablePath: executablePath, comm: comm, argv: argv) else { return nil }
         switch found {
-        case .claude where rest.first.map(["daemon", "bg-pty-host"].contains) == true: return nil
+        case .claude where rest.first.map(claudeHelpers.contains) == true: return nil
         case .codex where !Set(rest).isDisjoint(with: ["app-server", "mcp-server"]): return nil
         default: return found
         }
     }
 
-    /// Claude's idle `bg-spare` helpers are sessions only once a session file names them.
-    static func requiresSessionFile(argv: [String]) -> Bool { argv.dropFirst().first == "bg-spare" }
+    /// The first arguments of the Claude processes that are no session.
+    private static let claudeHelpers: Set<String> = ["daemon", "bg-pty-host", "--bg-pty-host", "--daemon-worker",
+                                                     "--claude-in-chrome-mcp", "--chrome-native-host", "--computer-use-mcp"]
+
+    /// Claude's warm `bg-spare` and `--preload` helpers are sessions only once
+    /// a session file names them.
+    static func requiresSessionFile(argv: [String]) -> Bool {
+        argv.dropFirst().first.map(["bg-spare", "--bg-spare", "--preload"].contains) == true
+    }
 
     /// The agent, and the arguments after its binary or script.
     private static func identify(executablePath: String?, comm: String,
@@ -309,6 +320,8 @@ enum AgentSessionsSupport {
         let agentType: String?
         let description: String?
         let finished: Bool?
+        let stoppedByUser: Bool?
+        let requestShape: String?
     }
 
     static func parseClaudeFile(_ data: Data) -> AgentClaudeFile? {
@@ -329,17 +342,26 @@ enum AgentSessionsSupport {
         let task = meta.description?.isEmpty == false ? meta.description : nil
         guard let name = type ?? task else { return nil }
         return AgentSubagent(id: id, name: name, task: type == nil ? nil : task, lastActivity: lastActivity,
-                             finished: meta.finished == true)
+                             finished: meta.finished == true || meta.stoppedByUser == true,
+                             background: meta.requestShape == "background")
     }
 
+    /// One in the background works until Claude marks it done, as it may
+    /// think for long without writing; any other while it writes.
     static func subagentIsWorking(_ subagent: AgentSubagent, now: Date) -> Bool {
-        !subagent.finished && now.timeIntervalSince(subagent.lastActivity) < subagentWindow
+        !subagent.finished && (subagent.background || now.timeIntervalSince(subagent.lastActivity) < subagentWindow)
     }
 
-    /// A subagent shows while it works and, done, until the turn it worked
-    /// in ends; `turnStarted` is nil while its session is in no turn.
-    static func subagentShows(_ subagent: AgentSubagent, turnStarted: Date?, now: Date) -> Bool {
-        subagentIsWorking(subagent, now: now) || turnStarted.map { subagent.lastActivity >= $0 } == true
+    /// A session's subagents on show: those working and, while the request
+    /// they worked in lasts, those done in it. Subagents in the background
+    /// report back after the turn that started them, so the request lasts
+    /// while the session is busy or any of them still works. `request` is
+    /// when the person's latest request began.
+    static func subagentsShown(_ subagents: [AgentSubagent], request: Date?, busy: Bool, now: Date) -> [AgentSubagent] {
+        let lasts = busy || subagents.contains { subagentIsWorking($0, now: now) }
+        return subagents.filter { subagent in
+            subagentIsWorking(subagent, now: now) || (lasts && request.map { subagent.lastActivity >= $0 } == true)
+        }
     }
 
     /// The last minute of a session's CPU, the newest reading last.
@@ -358,7 +380,7 @@ enum AgentSessionsSupport {
 
     /// The live sessions in reading order: each one's in-process subagents and
     /// then its child sessions, indented beneath it. `subagents` holds only
-    /// the ones working (see `subagentIsWorking`).
+    /// the ones on show (see `subagentsShown`).
     static func sessions(rows: [AgentProcessRow], probes: [Int32: AgentProbe], claudeFiles: [Int32: AgentClaudeFile],
                          subagents: [String: [AgentSubagent]], listeners: [AgentPort], hosts: [Int32: AgentHost],
                          ignoring ignored: Int32?) -> [AgentSession] {
@@ -441,13 +463,16 @@ enum AgentSessionsSupport {
     // MARK: Card
 
     /// Sessions of the agents the person follows, Hermes having no switch,
-    /// and nothing beneath one they do not.
+    /// and nothing beneath one they do not. Neither is a Claude session no
+    /// app owns that has no transcript yet: Claude keeps such warm ones of
+    /// its own for the next start, and no one has asked them anything.
     static func shown(_ sessions: [AgentSession], providers: [AgentProvider]) -> [AgentSession] {
         var skipping: Int?
         return sessions.filter { session in
             if let depth = skipping, session.depth > depth { return false }
             skipping = nil
-            guard session.kind.provider.map(providers.contains) ?? true else {
+            guard session.kind.provider.map(providers.contains) ?? true,
+                  !(session.kind == .claude && session.background && session.log == nil) else {
                 skipping = session.depth
                 return false
             }

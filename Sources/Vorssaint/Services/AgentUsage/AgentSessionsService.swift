@@ -240,12 +240,11 @@ final class AgentSessionsService: ObservableObject {
             guard let file = (try? Data(contentsOf: url)).flatMap(AgentSessionsSupport.parseClaudeFile),
                   AgentSessionsSupport.file(file, matches: probe.startedAt) else { continue }
             files[pid] = file
-            // The turn running now, as the last scan read it from the session's log.
-            let turn = file.working == true || file.asking
-                ? projectFolder(of: file.sessionId, now: now)
-                    .flatMap { activityLogs[$0.appending(path: file.sessionId + ".jsonl").path]?.activity.turnStarted }
-                : nil
-            subagents[file.sessionId] = shownSubagents(of: file.sessionId, turnStarted: turn, now: now)
+            // The person's latest request, as the last scan read it from the session's log.
+            let request = projectFolder(of: file.sessionId, now: now)
+                .flatMap { activityLogs[$0.appending(path: file.sessionId + ".jsonl").path]?.activity.turnStarted }
+            subagents[file.sessionId] = shownSubagents(of: file.sessionId, request: request, busy: file.working == true || file.asking,
+                                                       since: file.startedAt, now: now)
         }
 
         if probes.isEmpty && tracked.isEmpty {
@@ -357,26 +356,29 @@ final class AgentSessionsService: ObservableObject {
     }
 
     /// Claude keeps a session's subagents under `projects/<folder>/<id>/subagents`:
-    /// the ones working, and those done in the turn running now.
-    private func shownSubagents(of sessionId: String, turnStarted: Date?, now: Date) -> [AgentSubagent] {
+    /// the ones working, and those done in the request running now (see
+    /// `subagentsShown`). One written before the process began, by the same
+    /// session resumed, is not its.
+    private func shownSubagents(of sessionId: String, request: Date?, busy: Bool, since started: Date,
+                                now: Date) -> [AgentSubagent] {
         let fileManager = FileManager.default
         guard let folder = projectFolder(of: sessionId, now: now)?.appending(path: sessionId + "/subagents") else { return [] }
         let keys: Set<URLResourceKey> = [.contentModificationDateKey, .creationDateKey]
         let logs = (try? fileManager.contentsOfDirectory(at: folder, includingPropertiesForKeys: Array(keys))) ?? []
         // The window is checked before the meta is read, so old ones cost nothing.
-        let since = min(turnStarted ?? now, now.addingTimeInterval(-AgentSessionsSupport.subagentWindow))
-        return logs.compactMap { log in
+        let since = max(started, min(request ?? now, now.addingTimeInterval(-AgentSessionsSupport.subagentWindow)))
+        let found = logs.compactMap { log -> AgentSubagent? in
             guard log.pathExtension == "jsonl", let values = try? log.resourceValues(forKeys: keys),
                   let written = values.contentModificationDate, written >= since else { return nil }
             let name = log.deletingPathExtension().lastPathComponent
             guard var subagent = (try? Data(contentsOf: folder.appending(path: name + ".meta.json")))
-                .flatMap({ AgentSessionsSupport.parseSubagent(meta: $0, id: name, lastActivity: written) }),
-                  AgentSessionsSupport.subagentShows(subagent, turnStarted: turnStarted, now: now) else { return nil }
+                .flatMap({ AgentSessionsSupport.parseSubagent(meta: $0, id: name, lastActivity: written) }) else { return nil }
             subagent.started = values.creationDate
             subagent.log = log.path
             subagent.working = AgentSessionsSupport.subagentIsWorking(subagent, now: now)
             return subagent
         }
+        return AgentSessionsSupport.subagentsShown(found, request: request, busy: busy, now: now)
     }
 
     // MARK: Activity

@@ -104,10 +104,17 @@ enum AgentSessionsTests {
                           ["/Users/x/.nvm/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe", "daemon", "run", "--origin", "transient"]) == nil
                         && AgentSessionsSupport.kind(executablePath: nil, comm: "claude", argv: ["claude", "bg-pty-host", "--bg-pty-host", "/tmp/x.pty.sock", "200", "50"]) == nil,
                      "Claude's daemon and pty host are not sessions")
+        let vscode = "/Users/x/.vscode/extensions/anthropic.claude-code-2.1.317-darwin-arm64/resources/native-binary/claude"
+        suite.expect(kind(vscode, [vscode, "--claude-in-chrome-mcp"]) == nil && kind(vscode, [vscode, "--computer-use-mcp"]) == nil
+                        && kind(vscode, [vscode, "--chrome-native-host"]) == nil && kind(vscode, [vscode, "--daemon-worker", "bg"]) == nil
+                        && kind(vscode, [vscode, "--output-format", "stream-json"]) == .claude,
+                     "the MCP servers, Chrome host and daemon workers Claude runs of itself are not sessions")
         suite.expect(AgentSessionsSupport.kind(executablePath: nil, comm: "claude", argv: ["claude", "bg-spare", "--bg-spare", "/tmp/x.claim.sock"]) == .claude
                         && AgentSessionsSupport.requiresSessionFile(argv: ["claude", "bg-spare", "--bg-spare", "/tmp/x"])
+                        && AgentSessionsSupport.requiresSessionFile(argv: [vscode, "--bg-spare", "/tmp/x"])
+                        && AgentSessionsSupport.requiresSessionFile(argv: [vscode, "--preload"])
                         && !AgentSessionsSupport.requiresSessionFile(argv: ["claude", "--continue"]),
-                     "a spare helper is a session only when a session file says so")
+                     "a warm spare is a session only when a session file says so")
         suite.expect(kind("/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
                           ["/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex", "-c", "features.code_mode_host=true", "app-server"]) == nil
                         && kind("/opt/homebrew/bin/node", ["node", "/x/@openai/codex/bin/codex.js", "mcp-server"]) == nil
@@ -233,15 +240,31 @@ enum AgentSessionsTests {
         var marked = working
         marked.finished = true
         suite.expect(!AgentSessionsSupport.subagentIsWorking(marked, now: now), "one Claude marked done is done at once")
-        let turn = now.addingTimeInterval(-120)
-        suite.expect(AgentSessionsSupport.subagentShows(done, turnStarted: turn, now: now)
-                        && !AgentSessionsSupport.subagentShows(done, turnStarted: nil, now: now)
-                        && !AgentSessionsSupport.subagentShows(done, turnStarted: now.addingTimeInterval(-20), now: now)
-                        && AgentSessionsSupport.subagentShows(working, turnStarted: nil, now: now),
-                     "a subagent done stays until its turn ends, one done in an earlier turn does not show")
+        let request = now.addingTimeInterval(-120)
+        func shown(_ subagents: [AgentSubagent], request: Date?, busy: Bool) -> [String] {
+            AgentSessionsSupport.subagentsShown(subagents, request: request, busy: busy, now: now).map(\.id)
+        }
+        suite.expect(shown([done, working], request: request, busy: true) == ["agent-2", "agent-1"]
+                        && shown([done], request: request, busy: false).isEmpty
+                        && shown([done, working], request: now.addingTimeInterval(-20), busy: true) == ["agent-1"]
+                        && shown([working], request: nil, busy: false) == ["agent-1"],
+                     "a subagent done stays until its request ends, one done in an earlier request does not show")
+        var thinking = AgentSubagent(id: "agent-3", name: "general-purpose", lastActivity: now.addingTimeInterval(-90))
+        thinking.background = true
+        suite.expect(AgentSessionsSupport.subagentIsWorking(thinking, now: now)
+                        && shown([done, thinking], request: request, busy: false) == ["agent-2", "agent-3"],
+                     "one in the background works, silent, until marked done, and its request lasts while the session idles")
+        thinking.finished = true
+        suite.expect(shown([done, thinking], request: request, busy: false).isEmpty
+                        && shown([done, thinking], request: request, busy: true) == ["agent-2", "agent-3"],
+                     "once all are done the request ends with the session's turn")
         let meta = AgentSessionsSupport.parseSubagent(meta: Data(#"{"agentType":"Explore","description":"Look around","finished":true}"#.utf8),
                                                       id: "agent-1", lastActivity: now)
         let typeless = AgentSessionsSupport.parseSubagent(meta: Data(#"{"description":"Look around"}"#.utf8), id: "x", lastActivity: now)
+        let background = AgentSessionsSupport.parseSubagent(
+            meta: Data(#"{"agentType":"general-purpose","requestShape":"background","stoppedByUser":true}"#.utf8), id: "x", lastActivity: now)
+        suite.expect(background?.background == true && background?.finished == true && meta?.background == false,
+                     "a subagent knows it runs in the background, and one the person stopped is done")
         suite.expect(meta?.name == "Explore" && meta?.task == "Look around" && meta?.finished == true
                         && typeless?.name == "Look around" && typeless?.task == nil
                         && AgentSessionsSupport.parseSubagent(meta: Data(#"{"agentType":"Plan"}"#.utf8), id: "x", lastActivity: now)?.name == "Plan"
@@ -286,7 +309,7 @@ enum AgentSessionsTests {
                                                       AgentSession(id: "c", kind: .codex, pid: 8, identity: 8)]
         suite.expect(AgentSessionsSupport.shown(mixed, providers: [.codex]).map(\.pid) == [9, 8],
                      "an agent the person stopped following is left out, and Hermes has no switch")
-        let tree = [AgentSession(id: "a", kind: .claude, pid: 1, identity: 1),
+        let tree = [AgentSession(id: "a", kind: .claude, pid: 1, identity: 1, log: "/p/a.jsonl"),
                     AgentSession(id: "b", kind: .codex, pid: 2, identity: 2, depth: 1),
                     AgentSession(id: "c", kind: .claude, pid: 0, identity: 0, depth: 2),
                     AgentSession(id: "d", kind: .codex, pid: 3, identity: 3)]
@@ -294,6 +317,14 @@ enum AgentSessionsTests {
                         && AgentSessionsSupport.shown(tree, providers: [.claude]).map(\.id) == ["a"]
                         && AgentSessionsSupport.shown(tree, providers: [.claude, .codex]).count == 4,
                      "what hangs beneath an agent the person does not follow goes with it")
+        let terminal = AgentHost(pid: 50, name: "Terminal")
+        let warm = [AgentSession(id: "w", kind: .claude, pid: 4, identity: 4),
+                    AgentSession(id: "w.mcp", kind: .claude, pid: 5, identity: 5, depth: 1),
+                    AgentSession(id: "t", kind: .claude, pid: 6, identity: 6, host: terminal),
+                    AgentSession(id: "b", kind: .claude, pid: 7, identity: 7, log: "/p/b.jsonl"),
+                    AgentSession(id: "x", kind: .codex, pid: 8, identity: 8)]
+        suite.expect(AgentSessionsSupport.shown(warm, providers: [.claude, .codex]).map(\.id) == ["t", "b", "x"],
+                     "a Claude session no app owns and no one has asked anything yet is left out, with what runs beneath it")
         suite.expect(AgentSessionsSupport.sample(now: now).contains { $0.background } && AgentSessionsSupport.sample(now: now).count > 3
                         && AgentSessionsSupport.sample(now: now).contains { $0.isSubagent && $0.task != nil },
                      "the Settings preview has example rows, one in the background and subagents with tasks")

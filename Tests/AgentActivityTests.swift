@@ -95,6 +95,22 @@ enum AgentActivityTests {
         AgentActivitySupport.applyClaude(claudeUser("Next", extra: ["timestamp": "2027-01-15T09:00:00.000Z"]), to: &turn)
         suite.expect(turn.model == "claude-opus-5-5" && turn.turnStarted == AgentTimestamp.parse("2027-01-15T08:00:00.000Z"),
                      "Claude's own notices name no model, and a prompt during a turn joins it")
+        var report = AgentActivity()
+        AgentActivitySupport.applyClaude(claudeUser("Ask two helpers", extra: ["timestamp": "2027-01-15T08:00:00.000Z"]), to: &report)
+        AgentActivitySupport.applyClaude(claudeAssistant([["type": "text", "text": "Started them"]],
+                                                         stop: "end_turn").merging(["timestamp": "2027-01-15T08:00:03.000Z"]) { $1 },
+                                         to: &report)
+        AgentActivitySupport.applyClaude(claudeUser("<task-notification>a1 done</task-notification>",
+                                                    extra: ["timestamp": "2027-01-15T08:00:20.000Z"]), to: &report)
+        AgentActivitySupport.applyClaude(claudeAssistant([["type": "tool_use", "id": "r1", "name": "Read", "input": ["file_path": "/p/a.swift"]]])
+            .merging(["timestamp": "2027-01-15T08:00:21.000Z"]) { $1 }, to: &report)
+        suite.expect(report.inTurn && report.turnStarted == AgentTimestamp.parse("2027-01-15T08:00:00.000Z"),
+                     "a turn a subagent's report starts belongs to the person's request")
+        AgentActivitySupport.applyClaude(claudeUser("Thanks, next", extra: ["timestamp": "2027-01-15T08:05:00.000Z"]), to: &report)
+        AgentActivitySupport.applyClaude(claudeAssistant([["type": "text", "text": "Sure"]], stop: "end_turn")
+            .merging(["timestamp": "2027-01-15T08:05:02.000Z"]) { $1 }, to: &report)
+        AgentActivitySupport.applyClaude(claudeUser("And this", extra: ["timestamp": "2027-01-15T08:06:00.000Z"]), to: &report)
+        suite.expect(report.turnStarted == AgentTimestamp.parse("2027-01-15T08:06:00.000Z"), "the person's next prompt starts a new request")
         var sub = AgentActivity()
         AgentActivitySupport.applyClaude(claudeUser("Look around", extra: side), to: &sub)
         AgentActivitySupport.applyClaude(claudeUser("Not mine", extra: side), to: &turn)

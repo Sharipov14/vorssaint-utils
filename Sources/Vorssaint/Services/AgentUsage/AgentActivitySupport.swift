@@ -52,7 +52,8 @@ struct AgentActivity: Equatable {
     var files: [AgentFileDiff] = []
     /// The model of its latest reply, as the log names it.
     var model: String?
-    /// When the turn running now began, by the log's first line of it read.
+    /// When the person's latest request began, by the log's first line of it
+    /// read; a turn the session starts on its own keeps it.
     var turnStarted: Date?
     /// Tokens the latest request held with its reply, as the log counts them.
     var context: Int?
@@ -78,7 +79,12 @@ struct AgentActivity: Equatable {
     }
 
     mutating func called(_ id: String, _ step: AgentStep) {
-        if !inTurn { began() }
+        // A turn begun with no prompt, as on a subagent's report, serves the same request.
+        if !inTurn {
+            let request = turnStarted
+            began()
+            turnStarted = request
+        }
         pending[id] = step
         self.step = step
         state = .running
