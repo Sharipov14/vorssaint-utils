@@ -8,6 +8,9 @@ private enum NotchAgentTab: CaseIterable {
     case live, stats
 
     var symbol: String { self == .live ? "waveform.path.ecg" : "chart.bar.xaxis" }
+
+    /// Live sits left of Statistics, so each slides in from its own side.
+    var transition: AnyTransition { .opacity.combined(with: .offset(x: self == .live ? -24 : 24)) }
 }
 
 /// The AI page: the agents running now, or the cards the person picked,
@@ -34,6 +37,9 @@ struct NotchAgentsView: View {
     @State private var openDiff: AgentDiffTarget?
     /// Whether this view has asked the service to scan, which it must undo once.
     @State private var watching = false
+    @Namespace private var tabSelection
+
+    private var tabAnimation: Animation? { reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.88) }
 
     private var text: NotchAgentStrings { FeatureStrings.notchAgents(l10n.language) }
     private var chosenPeriod: AgentPeriod { AgentPeriod(rawValue: period) ?? .today }
@@ -83,8 +89,9 @@ struct NotchAgentsView: View {
             if shownTab == .live {
                 NotchAgentSessionsList(size: size, providers: followed, recent: providers, text: text, preview: preview,
                                        diff: $openDiff)
+                    .transition(NotchAgentTab.live.transition)
             } else {
-                statistics
+                statistics.transition(NotchAgentTab.stats.transition)
             }
         }
         .frame(width: size.width, height: size.height, alignment: .top)
@@ -92,7 +99,7 @@ struct NotchAgentsView: View {
         .notchBand(leading: {
             if shownTab == .live, openDiff != nil {
                 NotchBandBackButton(title: text.liveTab) {
-                    withAnimation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.88)) { openDiff = nil }
+                    withAnimation(tabAnimation) { openDiff = nil }
                 }
                 .transition(.opacity)
             } else {
@@ -162,7 +169,7 @@ struct NotchAgentsView: View {
             ForEach(NotchAgentTab.allCases, id: \.self) { option in
                 let title = option == .live ? text.liveTab : text.statsTab
                 let current = option == shownTab
-                Button { tab = option } label: {
+                Button { withAnimation(tabAnimation) { tab = option } } label: {
                     HStack(spacing: 4) {
                         Image(systemName: option.symbol)
                         if labeled { Text(title).lineLimit(1) }
@@ -172,7 +179,12 @@ struct NotchAgentsView: View {
                     .foregroundStyle(.white.opacity(current ? 0.95 : 0.55))
                     .padding(.horizontal, 7)
                     .frame(height: 26)
-                    .background(.white.opacity(current ? 0.14 : 0), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    .background {
+                        if current {
+                            RoundedRectangle(cornerRadius: 9, style: .continuous).fill(.white.opacity(0.14))
+                                .matchedGeometryEffect(id: "tab", in: tabSelection)
+                        }
+                    }
                     .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                 }
                 .buttonStyle(NotchButtonStyle(cornerRadius: 9))
@@ -181,6 +193,8 @@ struct NotchAgentsView: View {
                 .accessibilityAddTraits(current ? .isSelected : [])
             }
         }
+        // The row is drawn in the island's band, outside this body's transaction.
+        .animation(tabAnimation, value: shownTab)
         .fixedSize()
     }
 
