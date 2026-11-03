@@ -881,6 +881,8 @@ final class NotchService: ObservableObject {
     /// Live tab needs; nil while the logs are first read, when the page fills
     /// the island with its progress.
     private func agentsContentHeight(width: CGFloat) -> CGFloat? {
+        // A conversation takes all the room the island has.
+        if NotchChatService.shared.isShown { return nil }
         let usage = AgentUsageService.shared.snapshot
         let enabled = NotchAgentSupport.providers()
         // Added Codex accounts have cards before, or without, any log.
@@ -4205,6 +4207,16 @@ final class NotchService: ObservableObject {
                     self?.syncMenuSpaceMonitoring()
                     self?.objectWillChange.send()
                     self?.refreshPresentation()
+                }.store(in: &subscriptions)
+            // The Chat tab opening or closing changes the page's height.
+            NotchChatService.shared.$isShown
+                .removeDuplicates()
+                .dropFirst()
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in
+                    guard let self, self.selected == .agents else { return }
+                    self.objectWillChange.send()
+                    self.refreshPresentation()
                 }.store(in: &subscriptions)
             // An added or removed Codex account adds or removes a card.
             CodexProfileLimitsService.shared.$states

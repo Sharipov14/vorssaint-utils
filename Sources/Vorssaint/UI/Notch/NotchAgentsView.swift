@@ -3,11 +3,17 @@
 
 import SwiftUI
 
-/// The AI page's two tabs, picked in the island's top row.
+/// The AI page's tabs, picked in the island's top row.
 private enum NotchAgentTab: CaseIterable {
-    case live, stats
+    case live, stats, chat
 
-    var symbol: String { self == .live ? "waveform.path.ecg" : "chart.bar.xaxis" }
+    var symbol: String {
+        switch self {
+        case .live: return "waveform.path.ecg"
+        case .stats: return "chart.bar.xaxis"
+        case .chat: return NotchChatView.symbol
+        }
+    }
 }
 
 /// The AI page: the agents running now, or the cards the person picked,
@@ -17,9 +23,13 @@ struct NotchAgentsView: View {
     @ObservedObject private var usage = AgentUsageService.shared
     @ObservedObject private var accounts = CodexProfileLimitsService.shared
     @ObservedObject private var approvals = AgentApprovalService.shared
+    /// Not observed: a reply typed out redraws the chat many times a second,
+    /// and only `pick` changes `isShown`, redrawing the page itself.
+    private var chat: NotchChatService { .shared }
     @ObservedObject private var l10n = L10n.shared
     @Environment(\.notchSettingsPreview) private var preview
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Namespace private var tabHighlight
     @AppStorage(DefaultsKey.notchAgentsPeriod) private var period = AgentPeriod.today.rawValue
     @AppStorage(DefaultsKey.notchAgentsLimitDisplay) private var display = NotchAgentLimitDisplay.remaining.rawValue
     @AppStorage(DefaultsKey.notchAgentsCardOrder) private var cardOrder = ""
@@ -37,8 +47,13 @@ struct NotchAgentsView: View {
 
     private var text: NotchAgentStrings { FeatureStrings.notchAgents(l10n.language) }
     private var chosenPeriod: AgentPeriod { AgentPeriod(rawValue: period) ?? .today }
-    /// Settings, where the cards are arranged, opens on them.
-    private var shownTab: NotchAgentTab { tab ?? (preview ? .stats : .live) }
+    /// Settings, where the cards are arranged, opens on them. A chat left
+    /// open is where the page reopens, its conversation still there.
+    private var shownTab: NotchAgentTab {
+        if let tab { return tab }
+        if !preview && chat.isShown { return .chat }
+        return preview ? .stats : .live
+    }
 
     /// The Codex homes the person added, each with a card in the Limits
     /// card's place, so none while that card is hidden.
@@ -83,6 +98,8 @@ struct NotchAgentsView: View {
             if shownTab == .live {
                 NotchAgentSessionsList(size: size, providers: followed, recent: providers, text: text, preview: preview,
                                        diff: $openDiff)
+            } else if shownTab == .chat {
+                NotchChatView(size: size, preview: preview)
             } else {
                 statistics
             }
@@ -100,6 +117,7 @@ struct NotchAgentsView: View {
             }
         }, trailing: {
             if shownTab == .stats && showsPeriod { periodMenu }
+            if shownTab == .chat && !preview { NotchChatBandControls() }
         })
         .onAppear {
             usage.pageDidAppear(preview: preview)
@@ -109,7 +127,8 @@ struct NotchAgentsView: View {
         .onChange(of: watchesSessions) { _, _ in syncSessions() }
         // A permission request waits on the Live tab, over whatever was open.
         .onChange(of: approvals.pending.count) { before, after in
-            guard !preview, after > before else { return }
+            // The Chat tab keeps its place: requests now wait in an island of their own.
+            guard !preview, after > before, !chat.isShown else { return }
             tab = nil
             openDiff = nil
         }
@@ -160,9 +179,9 @@ struct NotchAgentsView: View {
         let working = usage.snapshot.live.first?.provider
         return HStack(spacing: 2) {
             ForEach(NotchAgentTab.allCases, id: \.self) { option in
-                let title = option == .live ? text.liveTab : text.statsTab
+                let title = self.title(option)
                 let current = option == shownTab
-                Button { tab = option } label: {
+                Button { pick(option) } label: {
                     HStack(spacing: 4) {
                         Image(systemName: option.symbol)
                         if labeled { Text(title).lineLimit(1) }
@@ -172,7 +191,13 @@ struct NotchAgentsView: View {
                     .foregroundStyle(.white.opacity(current ? 0.95 : 0.55))
                     .padding(.horizontal, 7)
                     .frame(height: 26)
-                    .background(.white.opacity(current ? 0.14 : 0), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    .background {
+                        if current {
+                            // Its own id per variant: ViewThatFits may build both.
+                            RoundedRectangle(cornerRadius: 9, style: .continuous).fill(.white.opacity(0.14))
+                                .matchedGeometryEffect(id: labeled ? "labeled" : "symbols", in: tabHighlight)
+                        }
+                    }
                     .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                 }
                 .buttonStyle(NotchButtonStyle(cornerRadius: 9))
@@ -181,7 +206,23 @@ struct NotchAgentsView: View {
                 .accessibilityAddTraits(current ? .isSelected : [])
             }
         }
+        .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.82), value: shownTab)
         .fixedSize()
+    }
+
+    private func title(_ tab: NotchAgentTab) -> String {
+        switch tab {
+        case .live: return text.liveTab
+        case .stats: return text.statsTab
+        case .chat: return FeatureStrings.notchChat(l10n.language).title
+        }
+    }
+
+    private func pick(_ option: NotchAgentTab) {
+        tab = option
+        guard !preview else { return }
+        // The chat page takes the keyboard itself once it shows.
+        chat.isShown = option == .chat
     }
 
     private func syncSessions() {
