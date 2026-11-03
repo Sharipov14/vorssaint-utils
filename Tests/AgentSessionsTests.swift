@@ -185,20 +185,39 @@ enum AgentSessionsTests {
         suite.expect(stale.first?.cwd == "/elsewhere" && stale.first?.status == .waiting && stale.first?.title == nil,
                      "a file left by an older process with the same pid is not trusted")
 
-        let working = AgentSubagent(id: "agent-1", title: "Explore", lastActivity: now.addingTimeInterval(-5))
-        let done = AgentSubagent(id: "agent-2", title: "Old", lastActivity: now.addingTimeInterval(-31))
-        let nested = build(rows, [20: probe(.claude, age: 900)], files: [20: file!], subagents: ["abc-1": [working]])
-        suite.expect(nested.map(\.title) == ["fix tests", "Explore"] && nested[1].isSubagent && nested[1].depth == 1
+        let working = AgentSubagent(id: "agent-1", name: "Explore", task: "Look around", lastActivity: now.addingTimeInterval(-5),
+                                    started: now.addingTimeInterval(-60), log: "/p/agent-1.jsonl")
+        var done = AgentSubagent(id: "agent-2", name: "Plan", lastActivity: now.addingTimeInterval(-31),
+                                 started: now.addingTimeInterval(-300))
+        done.working = false
+        let nested = build(rows, [20: probe(.claude, age: 900)], files: [20: file!], subagents: ["abc-1": [done, working]])
+        suite.expect(nested.map(\.title) == ["fix tests", "Plan", "Explore"] && nested[1].isSubagent && nested[1].depth == 1
                         && nested[1].pid == 0,
-                     "a subagent is listed under its parent, with nothing to kill")
-        suite.expect(AgentSessionsSupport.subagentIsWorking(lastActivity: working.lastActivity, now: now)
-                        && !AgentSessionsSupport.subagentIsWorking(lastActivity: done.lastActivity, now: now),
+                     "subagents are listed under their parent in the order they began, with nothing to kill")
+        suite.expect(nested[2].status == .working && nested[2].task == "Look around" && nested[2].log == "/p/agent-1.jsonl"
+                        && nested[2].started == working.started && nested[2].ended == nil
+                        && nested[1].status == .waiting && nested[1].ended == done.lastActivity,
+                     "a subagent keeps its task, its log and when it began; one done stops its time at its last write")
+        suite.expect(AgentSessionsSupport.subagentIsWorking(working, now: now)
+                        && !AgentSessionsSupport.subagentIsWorking(done, now: now),
                      "only a subagent that wrote in the last 30 seconds is working")
-        let meta = AgentSessionsSupport.parseSubagent(meta: Data(#"{"agentType":"Explore","description":"Look around"}"#.utf8),
+        var marked = working
+        marked.finished = true
+        suite.expect(!AgentSessionsSupport.subagentIsWorking(marked, now: now), "one Claude marked done is done at once")
+        let turn = now.addingTimeInterval(-120)
+        suite.expect(AgentSessionsSupport.subagentShows(done, turnStarted: turn, now: now)
+                        && !AgentSessionsSupport.subagentShows(done, turnStarted: nil, now: now)
+                        && !AgentSessionsSupport.subagentShows(done, turnStarted: now.addingTimeInterval(-20), now: now)
+                        && AgentSessionsSupport.subagentShows(working, turnStarted: nil, now: now),
+                     "a subagent done stays until its turn ends, one done in an earlier turn does not show")
+        let meta = AgentSessionsSupport.parseSubagent(meta: Data(#"{"agentType":"Explore","description":"Look around","finished":true}"#.utf8),
                                                       id: "agent-1", lastActivity: now)
-        suite.expect(meta?.title == "Look around"
-                        && AgentSessionsSupport.parseSubagent(meta: Data(#"{"agentType":"Plan"}"#.utf8), id: "x", lastActivity: now)?.title == "Plan",
-                     "a subagent is named by its description, or else its type")
+        let typeless = AgentSessionsSupport.parseSubagent(meta: Data(#"{"description":"Look around"}"#.utf8), id: "x", lastActivity: now)
+        suite.expect(meta?.name == "Explore" && meta?.task == "Look around" && meta?.finished == true
+                        && typeless?.name == "Look around" && typeless?.task == nil
+                        && AgentSessionsSupport.parseSubagent(meta: Data(#"{"agentType":"Plan"}"#.utf8), id: "x", lastActivity: now)?.name == "Plan"
+                        && AgentSessionsSupport.parseSubagent(meta: Data("{}".utf8), id: "x", lastActivity: now) == nil,
+                     "a subagent is named by its type and described by its task, or named by the task")
     }
 
     private static func orphans(_ suite: TestSuite) {
@@ -246,7 +265,27 @@ enum AgentSessionsTests {
                         && AgentSessionsSupport.shown(tree, providers: [.claude]).map(\.id) == ["a"]
                         && AgentSessionsSupport.shown(tree, providers: [.claude, .codex]).count == 4,
                      "what hangs beneath an agent the person does not follow goes with it")
-        suite.expect(AgentSessionsSupport.sample(now: now).contains { $0.background } && AgentSessionsSupport.sample(now: now).count > 3,
-                     "the Settings preview has example rows, one in the background")
+        suite.expect(AgentSessionsSupport.sample(now: now).contains { $0.background } && AgentSessionsSupport.sample(now: now).count > 3
+                        && AgentSessionsSupport.sample(now: now).contains { $0.isSubagent && $0.task != nil },
+                     "the Settings preview has example rows, one in the background and subagents with tasks")
+
+        let groups = AgentSessionsSupport.groups(tree)
+        suite.expect(groups.map(\.id) == ["a", "d"] && groups[0].children.map(\.id) == ["b", "c"] && groups[1].children.isEmpty,
+                     "each top session takes all beneath it, however deep")
+        suite.expect(AgentSessionsSupport.groups([AgentSession(id: "x", kind: .claude, pid: 0, identity: 0, depth: 1)]).map(\.id) == ["x"],
+                     "a child whose parent is not shown stands on its own")
+        let tiles = AgentSessionsSupport.rows(["a", "b", "W", "c", "d", "e"], columns: 2) { $0 == "W" }
+        suite.expect(tiles == [["a", "b"], ["W"], ["c", "d"], ["e"]]
+                        && AgentSessionsSupport.rows(["a", "W", "b"], columns: 2) { $0 == "W" } == [["a"], ["W"], ["b"]]
+                        && AgentSessionsSupport.rows(["a", "b", "c", "d"], columns: 3) { _ in false } == [["a", "b", "c"], ["d"]]
+                        && AgentSessionsSupport.rows(["a", "b"], columns: 0) { _ in false } == [["a"], ["b"]],
+                     "tiles fill rows in reading order, a wide one on its own row")
+        suite.expect(AgentSessionsSupport.columns(width: 404, minimum: 124, spacing: 6) == 3
+                        && AgentSessionsSupport.columns(width: 300, minimum: 124, spacing: 6) == 2
+                        && AgentSessionsSupport.columns(width: 40, minimum: 124, spacing: 6) == 1,
+                     "a row holds as many tiles as fit, and at least one")
+        let minute = (0..<40).reduce([Double]()) { AgentSessionsSupport.load($0, adding: Double($1)) }
+        suite.expect(minute.count == AgentSessionsSupport.loadSamples && minute.last == 39 && minute.first == 10,
+                     "a session's CPU history keeps its last minute, the newest last")
     }
 }

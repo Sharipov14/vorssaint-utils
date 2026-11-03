@@ -71,6 +71,33 @@ enum AgentActivityTests {
         feed(claudeUser("Try again"))
         feed(claudeAssistant([["type": "text", "text": "API Error: 529"]]).merging(["isApiErrorMessage": true]) { $1 })
         suite.expect(activity.state == .failed, "an API error fails the turn")
+
+        // A turn's start is its first line read; a subagent's file is read as a sidechain.
+        var turn = AgentActivity()
+        let side: [String: Any] = ["isSidechain": true]
+        AgentActivitySupport.applyClaude(claudeUser("Find the bug", extra: ["timestamp": "2027-01-15T08:00:00.000Z"]), to: &turn)
+        var reply = claudeAssistant([["type": "text", "text": "On it"]])
+        reply["timestamp"] = "2027-01-15T08:00:09.000Z"
+        reply["message"] = (reply["message"] as? [String: Any] ?? [:]).merging(["model": "claude-opus-5-5"]) { $1 }
+        AgentActivitySupport.applyClaude(reply, to: &turn)
+        suite.expect(turn.turnStarted == AgentTimestamp.parse("2027-01-15T08:00:00.000Z") && turn.model == "claude-opus-5-5",
+                     "a turn starts at its prompt's time, and a reply names its model")
+        var notice = claudeAssistant([["type": "text", "text": "No response requested."]])
+        notice["message"] = (notice["message"] as? [String: Any] ?? [:]).merging(["model": "<synthetic>"]) { $1 }
+        AgentActivitySupport.applyClaude(notice, to: &turn)
+        AgentActivitySupport.applyClaude(claudeUser("Next", extra: ["timestamp": "2027-01-15T09:00:00.000Z"]), to: &turn)
+        suite.expect(turn.model == "claude-opus-5-5" && turn.turnStarted == AgentTimestamp.parse("2027-01-15T08:00:00.000Z"),
+                     "Claude's own notices name no model, and a prompt during a turn joins it")
+        var sub = AgentActivity()
+        AgentActivitySupport.applyClaude(claudeUser("Look around", extra: side), to: &sub)
+        AgentActivitySupport.applyClaude(claudeUser("Not mine", extra: side), to: &turn)
+        suite.expect(sub.prompt == nil && turn.prompt == "Next", "a session's file skips its subagents' lines")
+        AgentActivitySupport.applyClaude(claudeUser("Look around", extra: side), to: &sub, sidechain: true)
+        AgentActivitySupport.applyClaude(claudeAssistant([["type": "tool_use", "id": "s1", "name": "Grep",
+                                                           "input": ["pattern": "TODO"]]]).merging(side) { $1 },
+                                         to: &sub, sidechain: true)
+        suite.expect(sub.prompt == "Look around" && sub.state == .running && sub.step?.verb == .search,
+                     "a subagent's own file is read for its task and steps")
     }
 
     private static func codex(_ suite: TestSuite) {

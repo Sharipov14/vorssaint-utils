@@ -50,6 +50,10 @@ struct AgentActivity: Equatable {
     var pending: [String: AgentStep] = [:]
     /// The files the session changed, the latest first; kept across turns.
     var files: [AgentFileDiff] = []
+    /// The model of its latest reply, as the log names it.
+    var model: String?
+    /// When the turn running now began, by the log's first line of it read.
+    var turnStarted: Date?
 
     var inTurn: Bool { state == .thinking || state == .running }
 
@@ -59,6 +63,7 @@ struct AgentActivity: Equatable {
         step = nil
         reply = nil
         pending = [:]
+        turnStarted = nil
     }
 
     /// A prompt sent while a turn runs joins it; any other starts one.
@@ -326,16 +331,19 @@ enum AgentActivitySupport {
 
     /// A line of Claude Code's transcript. Request blobs repeat earlier
     /// messages and subagents write files of their own, so only the session's
-    /// own user and assistant lines count.
-    static func applyClaude(_ object: [String: Any], to activity: inout AgentActivity) {
+    /// own user and assistant lines count; a subagent's file, read as a
+    /// `sidechain`, holds only its own.
+    static func applyClaude(_ object: [String: Any], to activity: inout AgentActivity, sidechain: Bool = false) {
         // Claude notes the prompt again now and then, so a read that starts
         // after it, in a long turn, still knows what was asked.
         if object["type"] as? String == "last-prompt" {
             if let text = prompt(object["lastPrompt"] as? String) { activity.prompt = text }
             return
         }
-        guard object["isSidechain"] as? Bool != true, object["isMeta"] as? Bool != true,
+        guard (object["isSidechain"] as? Bool ?? false) == sidechain, object["isMeta"] as? Bool != true,
               let message = object["message"] as? [String: Any] else { return }
+        let time = (object["timestamp"] as? String).flatMap(AgentTimestamp.parse)
+        defer { if activity.inTurn && activity.turnStarted == nil { activity.turnStarted = time } }
         let items = message["content"] as? [[String: Any]] ?? []
         switch object["type"] as? String {
         case "user":
@@ -365,6 +373,8 @@ enum AgentActivitySupport {
             }
         case "assistant":
             if object["isApiErrorMessage"] as? Bool == true { return activity.ended(failed: true) }
+            // Claude's own notices name a model in angle brackets.
+            if let model = message["model"] as? String, !model.hasPrefix("<") { activity.model = model }
             for item in items {
                 switch item["type"] as? String {
                 case "tool_use":
