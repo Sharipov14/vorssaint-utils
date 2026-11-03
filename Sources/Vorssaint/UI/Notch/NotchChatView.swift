@@ -43,7 +43,12 @@ struct NotchChatView: View {
             }
         }
         .frame(width: size.width, height: size.height)
-        .onAppear { if !preview { focusEditor() } }
+        // Opening the island on the chat is opening it to type, even by hover.
+        .onAppear {
+            guard !preview, chat.selection != nil else { return }
+            NotchService.shared.presentationWindow?.makeKey()
+            focusEditor()
+        }
         // Clicking the island hands it the keyboard: the caret goes straight to the message.
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { note in
             guard !preview, let window = note.object as? NSWindow, window === editor.view?.window else { return }

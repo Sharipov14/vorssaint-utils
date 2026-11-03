@@ -219,9 +219,8 @@ struct NotchAgentsView: View {
     private func pick(_ option: NotchAgentTab) {
         tab = option
         guard !preview else { return }
+        // The chat page takes the keyboard itself once it shows.
         chat.isShown = option == .chat
-        // Picking the chat is asking to type, so the island takes the keyboard.
-        if option == .chat { NotchService.shared.presentationWindow?.makeKey() }
     }
 
     private func syncSessions() {
