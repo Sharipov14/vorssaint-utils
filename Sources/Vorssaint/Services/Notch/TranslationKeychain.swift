@@ -4,19 +4,23 @@
 import Foundation
 import Security
 
-/// The online translators' API keys, one keychain item per service. Keys
+/// API keys, one keychain item per account under a feature's service. Keys
 /// never touch preferences, so settings backups and exports cannot carry them.
-enum TranslationKeychain {
-    private static var service: String { (Bundle.main.bundleIdentifier ?? "com.vorssaint.utils") + ".translate" }
+struct SecretKeychain {
+    let service: String
 
-    private static func query(_ provider: NotchTranslateProvider) -> [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword,
-         kSecAttrService as String: service,
-         kSecAttrAccount as String: provider.rawValue]
+    init(suffix: String) {
+        service = (Bundle.main.bundleIdentifier ?? "com.vorssaint.utils") + "." + suffix
     }
 
-    static func key(for provider: NotchTranslateProvider) -> String {
-        var query = query(provider)
+    private func query(_ account: String) -> [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword,
+         kSecAttrService as String: service,
+         kSecAttrAccount as String: account]
+    }
+
+    func key(for account: String) -> String {
+        var query = query(account)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var item: CFTypeRef?
@@ -27,13 +31,13 @@ enum TranslationKeychain {
 
     /// An empty key removes the item.
     @discardableResult
-    static func setKey(_ key: String, for provider: NotchTranslateProvider) -> Bool {
+    func setKey(_ key: String, for account: String) -> Bool {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return remove(provider) }
+        guard !trimmed.isEmpty else { return remove(account) }
         let data = Data(trimmed.utf8)
-        let status = SecItemUpdate(query(provider) as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        let status = SecItemUpdate(query(account) as CFDictionary, [kSecValueData as String: data] as CFDictionary)
         if status == errSecItemNotFound {
-            var item = query(provider)
+            var item = query(account)
             item[kSecValueData as String] = data
             item[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
             return SecItemAdd(item as CFDictionary, nil) == errSecSuccess
@@ -42,8 +46,38 @@ enum TranslationKeychain {
     }
 
     @discardableResult
-    static func remove(_ provider: NotchTranslateProvider) -> Bool {
-        let status = SecItemDelete(query(provider) as CFDictionary)
+    func remove(_ account: String) -> Bool {
+        let status = SecItemDelete(query(account) as CFDictionary)
         return status == errSecSuccess || status == errSecItemNotFound
     }
+}
+
+/// The online translators' keys, one per service.
+enum TranslationKeychain {
+    private static let keychain = SecretKeychain(suffix: "translate")
+
+    static func key(for provider: NotchTranslateProvider) -> String { keychain.key(for: provider.rawValue) }
+
+    @discardableResult
+    static func setKey(_ key: String, for provider: NotchTranslateProvider) -> Bool {
+        keychain.setKey(key, for: provider.rawValue)
+    }
+
+    @discardableResult
+    static func remove(_ provider: NotchTranslateProvider) -> Bool { keychain.remove(provider.rawValue) }
+}
+
+/// The chat providers' keys, one per provider id.
+enum ChatKeychain {
+    private static let keychain = SecretKeychain(suffix: "chat")
+
+    static func key(for provider: ChatProvider) -> String { keychain.key(for: provider.id.uuidString) }
+
+    @discardableResult
+    static func setKey(_ key: String, for provider: ChatProvider) -> Bool {
+        keychain.setKey(key, for: provider.id.uuidString)
+    }
+
+    @discardableResult
+    static func remove(_ provider: ChatProvider) -> Bool { keychain.remove(provider.id.uuidString) }
 }
