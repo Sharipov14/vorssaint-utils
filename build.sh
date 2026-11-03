@@ -28,14 +28,17 @@ trap 'exit 1' INT TERM HUP
 
 # Flags: --dev builds the local-only "Vorssaint (Developer)" variant (its own
 # bundle id, so it coexists with the official app); --install puts it in /Applications.
+# --opt optimizes that variant like a release, for a Developer app used every day.
 DEV=0
 INSTALL=0
 TEST=0
+OPT=0
 TEST_ARGS=()
 for arg in "$@"; do
     case "$arg" in
         --dev)     DEV=1 ;;
         --install) INSTALL=1 ;;
+        --opt)     OPT=1 ;;
         --test)    TEST=1 ;;
         --test-suite=*) TEST=1; TEST_ARGS+=("--suite=${arg#*=}") ;;
         --list-tests) TEST=1; TEST_ARGS+=(--list) ;;
@@ -49,6 +52,10 @@ if (( DEV )); then
     BUILD_VARIANT_FLAGS=(-D VORSSAINT_DEVELOPMENT)
     APP_OPTIMIZATION_FLAGS=(-Onone)
     BUILD_CONFIGURATION="debug"
+    if (( OPT )); then
+        APP_OPTIMIZATION_FLAGS=(-O)
+        BUILD_CONFIGURATION="debug, optimized"
+    fi
 else
     APP_NAME="Vorssaint"
     EXECUTABLE="Vorssaint"
@@ -617,6 +624,11 @@ if (( ! DEV )); then
     find build -mindepth 1 -maxdepth 1 ! -name objects -exec rm -rf {} + 2>/dev/null || true
 fi
 APP_OBJECT_DIR="build/objects/$EXECUTABLE"
+# The optimized Developer build keeps its own incremental state, so switching
+# to and from the quick -Onone build recompiles nothing that has not changed.
+if (( DEV && OPT )); then
+    APP_OBJECT_DIR+="-O"
+fi
 mkdir -p build "$APP_OBJECT_DIR"
 APP_OUTPUT_FILE_MAP="$APP_OBJECT_DIR/output-file-map.json"
 write_swift_output_file_map "$APP_OUTPUT_FILE_MAP" "$APP_OBJECT_DIR" "${APP_SOURCES[@]}"
@@ -629,7 +641,10 @@ swiftc "${APP_OPTIMIZATION_FLAGS[@]}" -incremental -enable-batch-mode -j "$(sysc
     -target "$TARGET" -sdk "$SDK" "${SDK_COMPAT_FLAGS[@]}" "${VM_STATISTICS_COMPAT_FLAGS[@]}" "${HID_EVENT_SYSTEM_FLAGS[@]}" \
     "${BUILD_VARIANT_FLAGS[@]}" \
     -Xlinker -weak_framework -Xlinker Translation \
-    "${APP_SOURCES[@]}" -o "build/$EXECUTABLE"
+    "${APP_SOURCES[@]}" -o "$APP_OBJECT_DIR/$EXECUTABLE"
+# Linked beside its own objects: with nothing to recompile the driver skips
+# the link, and a shared output would keep the other build's binary.
+cp "$APP_OBJECT_DIR/$EXECUTABLE" "build/$EXECUTABLE"
 
 echo "▸ Compiling protected fan helper…"
 swiftc -O -target "$TARGET" -sdk "$SDK" "${SDK_COMPAT_FLAGS[@]}" "${BUILD_VARIANT_FLAGS[@]}" \
