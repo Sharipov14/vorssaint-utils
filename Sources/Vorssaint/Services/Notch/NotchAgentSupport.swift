@@ -41,6 +41,12 @@ enum NotchAgentReadout: String, CaseIterable, Identifiable {
     var advancesWithClock: Bool { self == .elapsed || self == .limit }
 }
 
+/// How the Live tab shows its sessions.
+enum NotchAgentSessionLayout: String, CaseIterable, Identifiable {
+    case list, grid
+    var id: String { rawValue }
+}
+
 enum NotchAgentLimitDisplay: String, CaseIterable, Identifiable {
     case remaining, used
     var id: String { rawValue }

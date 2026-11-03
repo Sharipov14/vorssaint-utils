@@ -31,6 +31,7 @@ struct NotchAgentsView: View {
     @AppStorage(DefaultsKey.notchAgentsCodex) private var codex = true
     @AppStorage(DefaultsKey.notchAgentsOpenCode) private var opencode = true
     @AppStorage(DefaultsKey.notchAgentsCopilot) private var copilot = true
+    @AppStorage(DefaultsKey.notchAgentsSessionLayout) private var sessionLayout = NotchAgentSessionLayout.list.rawValue
     /// The tab picked last, so the page reopens on it until the app quits.
     @MainActor private static var lastTab = NotchAgentTab.live
     /// Nil until the person picks one here, so each showing opens on `lastTab`.
@@ -108,7 +109,11 @@ struct NotchAgentsView: View {
                 tabs.transition(.opacity)
             }
         }, trailing: {
-            if shownTab == .stats && showsPeriod { periodMenu }
+            if shownTab == .stats && showsPeriod {
+                periodMenu
+            } else if shownTab == .live && openDiff == nil {
+                layoutButtons.transition(.opacity)
+            }
         })
         .onAppear {
             usage.pageDidAppear(preview: preview)
@@ -199,6 +204,37 @@ struct NotchAgentsView: View {
         }
         // The row is drawn in the island's band, outside this body's transaction.
         .animation(tabAnimation, value: shownTab)
+        .fixedSize()
+    }
+
+    /// The Live tab's sessions as a list or as tiles.
+    private var layoutButtons: some View {
+        let current = NotchAgentSessionLayout(rawValue: sessionLayout) ?? .list
+        return HStack(spacing: 2) {
+            ForEach(NotchAgentSessionLayout.allCases) { option in
+                let title = option == .list ? text.listLayout : text.gridLayout
+                Button {
+                    withAnimation(tabAnimation) { sessionLayout = option.rawValue }
+                } label: {
+                    Image(systemName: option == .list ? "list.bullet" : "square.grid.2x2")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.white.opacity(option == current ? 0.95 : 0.55))
+                        .frame(width: 28, height: 26)
+                        .background {
+                            if option == current {
+                                RoundedRectangle(cornerRadius: 9, style: .continuous).fill(.white.opacity(0.14))
+                                    .matchedGeometryEffect(id: "layout", in: tabSelection)
+                            }
+                        }
+                        .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                }
+                .buttonStyle(NotchButtonStyle(cornerRadius: 9))
+                .help(title)
+                .accessibilityLabel(title)
+                .accessibilityAddTraits(option == current ? .isSelected : [])
+            }
+        }
+        .animation(tabAnimation, value: sessionLayout)
         .fixedSize()
     }
 

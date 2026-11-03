@@ -152,6 +152,17 @@ struct NotchAgentStrings {
     let ok: String
     /// Leaves the typed answer, back to the picks' own button.
     let cancelTyping: String
+    /// The Live tab's two ways of showing sessions, in the island's top row.
+    let listLayout: String
+    let gridLayout: String
+    let subagentsFormat: String           // + count
+    /// Over a picked session's prompt and latest reply.
+    let recentActions: String
+    /// Opens and closes the list of files a session changed.
+    let showAll: String
+    let showLess: String
+    let changedFilesFormat: String        // + count
+    let costFormat: String                // + amount
 
     func tokens(_ count: String) -> String { String(format: tokensFormat, count) }
     func cached(_ share: String) -> String { String(format: cachedFormat, share) }
@@ -159,6 +170,9 @@ struct NotchAgentStrings {
     func saved(_ amount: String) -> String { String(format: savedFormat, amount) }
     func planMultiple(_ multiple: String, plan: String) -> String { String(format: planMultipleFormat, multiple, plan) }
     func finished(_ agent: String) -> String { String(format: finishedFormat, agent) }
+    func subagents(_ count: Int) -> String { String(format: subagentsFormat, count) }
+    func changedFiles(_ count: Int) -> String { String(format: changedFilesFormat, count) }
+    func cost(_ amount: String) -> String { String(format: costFormat, amount) }
     func left(_ share: String) -> String { String(format: leftFormat, share) }
     func usedShare(_ share: String) -> String { String(format: usedFormat, share) }
     func updated(_ when: String) -> String { String(format: updatedFormat, when) }
@@ -184,6 +198,21 @@ struct NotchAgentStrings {
             guard let step = activity.step else { return thinking }
             return [self.step(step.verb), step.target].filter { !$0.isEmpty }.joined(separator: " · ")
         case .finished: return activity.reply.map { done + " · " + $0 } ?? done
+        case .failed: return turnFailed
+        }
+    }
+
+    /// A word for a tile's capsule: the step's verb rather than its target.
+    func state(of session: AgentSession) -> String {
+        if session.status == .asking { return asking }
+        guard let activity = session.activity, let state = activity.state else {
+            return session.background ? background : session.status == .working ? working : waiting
+        }
+        if activity.inTurn && session.kind == .claude && session.status == .waiting { return done }
+        switch state {
+        case .thinking: return thinking
+        case .running: return activity.step.map { step($0.verb) } ?? thinking
+        case .finished: return done
         case .failed: return turnFailed
         }
     }
@@ -415,7 +444,15 @@ extension NotchAgentStrings {
         send: "Send",
         next: "Next",
         ok: "OK",
-        cancelTyping: "Cancel")
+        cancelTyping: "Cancel",
+        listLayout: "List",
+        gridLayout: "Tiles",
+        subagentsFormat: "Subagents: %d",
+        recentActions: "Recent actions",
+        showAll: "Show all",
+        showLess: "Show less",
+        changedFilesFormat: "Files changed: %d",
+        costFormat: "Cost: %@")
 
     static let uk = NotchAgentStrings(
         title: "ШІ-агенти",
@@ -559,7 +596,15 @@ extension NotchAgentStrings {
         send: "Надіслати",
         next: "Далі",
         ok: "OK",
-        cancelTyping: "Скасувати")
+        cancelTyping: "Скасувати",
+        listLayout: "Список",
+        gridLayout: "Плитки",
+        subagentsFormat: "Субагентів: %d",
+        recentActions: "Останні дії",
+        showAll: "Показати все",
+        showLess: "Згорнути",
+        changedFilesFormat: "Змінено файлів: %d",
+        costFormat: "Вартість: %@")
 
     static let ptBR = NotchAgentStrings(
         title: "Agentes de IA",
@@ -703,7 +748,15 @@ extension NotchAgentStrings {
         send: "Enviar",
         next: "Próxima",
         ok: "OK",
-        cancelTyping: "Cancelar")
+        cancelTyping: "Cancelar",
+        listLayout: "Lista",
+        gridLayout: "Blocos",
+        subagentsFormat: "Subagentes: %d",
+        recentActions: "Ações recentes",
+        showAll: "Mostrar tudo",
+        showLess: "Mostrar menos",
+        changedFilesFormat: "Arquivos alterados: %d",
+        costFormat: "Custo: %@")
 
     static let es = NotchAgentStrings(
         title: "Agentes de IA",
@@ -847,7 +900,15 @@ extension NotchAgentStrings {
         send: "Enviar",
         next: "Siguiente",
         ok: "OK",
-        cancelTyping: "Cancelar")
+        cancelTyping: "Cancelar",
+        listLayout: "Lista",
+        gridLayout: "Mosaico",
+        subagentsFormat: "Subagentes: %d",
+        recentActions: "Acciones recientes",
+        showAll: "Mostrar todo",
+        showLess: "Mostrar menos",
+        changedFilesFormat: "Archivos cambiados: %d",
+        costFormat: "Coste: %@")
 
     static let sk = NotchAgentStrings(
         title: "AI agenti",
@@ -991,7 +1052,15 @@ extension NotchAgentStrings {
         send: "Odoslať",
         next: "Ďalej",
         ok: "OK",
-        cancelTyping: "Zrušiť")
+        cancelTyping: "Zrušiť",
+        listLayout: "Zoznam",
+        gridLayout: "Dlaždice",
+        subagentsFormat: "Subagenti: %d",
+        recentActions: "Posledné akcie",
+        showAll: "Zobraziť všetko",
+        showLess: "Zobraziť menej",
+        changedFilesFormat: "Zmenené súbory: %d",
+        costFormat: "Cena: %@")
 
     static let de = NotchAgentStrings(
         title: "KI-Agenten",
@@ -1135,7 +1204,15 @@ extension NotchAgentStrings {
         send: "Senden",
         next: "Weiter",
         ok: "OK",
-        cancelTyping: "Abbrechen")
+        cancelTyping: "Abbrechen",
+        listLayout: "Liste",
+        gridLayout: "Kacheln",
+        subagentsFormat: "Subagenten: %d",
+        recentActions: "Letzte Aktionen",
+        showAll: "Alle zeigen",
+        showLess: "Weniger zeigen",
+        changedFilesFormat: "Geänderte Dateien: %d",
+        costFormat: "Kosten: %@")
 
     static let fr = NotchAgentStrings(
         title: "Agents IA",
@@ -1279,7 +1356,15 @@ extension NotchAgentStrings {
         send: "Envoyer",
         next: "Suivant",
         ok: "OK",
-        cancelTyping: "Annuler")
+        cancelTyping: "Annuler",
+        listLayout: "Liste",
+        gridLayout: "Tuiles",
+        subagentsFormat: "Sous-agents\u{00A0}: %d",
+        recentActions: "Actions récentes",
+        showAll: "Tout afficher",
+        showLess: "Afficher moins",
+        changedFilesFormat: "Fichiers modifiés\u{00A0}: %d",
+        costFormat: "Coût\u{00A0}: %@")
 
     static let it = NotchAgentStrings(
         title: "Agenti IA",
@@ -1423,7 +1508,15 @@ extension NotchAgentStrings {
         send: "Invia",
         next: "Avanti",
         ok: "OK",
-        cancelTyping: "Annulla")
+        cancelTyping: "Annulla",
+        listLayout: "Elenco",
+        gridLayout: "Riquadri",
+        subagentsFormat: "Subagenti: %d",
+        recentActions: "Azioni recenti",
+        showAll: "Mostra tutto",
+        showLess: "Mostra meno",
+        changedFilesFormat: "File modificati: %d",
+        costFormat: "Costo: %@")
 
     static let ru = NotchAgentStrings(
         title: "ИИ-агенты",
@@ -1567,7 +1660,15 @@ extension NotchAgentStrings {
         send: "Отправить",
         next: "Далее",
         ok: "OK",
-        cancelTyping: "Отмена")
+        cancelTyping: "Отмена",
+        listLayout: "Список",
+        gridLayout: "Плитки",
+        subagentsFormat: "Субагентов: %d",
+        recentActions: "Последние действия",
+        showAll: "Показать всё",
+        showLess: "Свернуть",
+        changedFilesFormat: "Изменено файлов: %d",
+        costFormat: "Стоимость: %@")
 
     static let tr = NotchAgentStrings(
         title: "YZ Ajanları",
@@ -1711,7 +1812,15 @@ extension NotchAgentStrings {
         send: "Gönder",
         next: "İleri",
         ok: "Tamam",
-        cancelTyping: "Vazgeç")
+        cancelTyping: "Vazgeç",
+        listLayout: "Liste",
+        gridLayout: "Kutucuklar",
+        subagentsFormat: "Alt ajanlar: %d",
+        recentActions: "Son eylemler",
+        showAll: "Tümünü göster",
+        showLess: "Daha az göster",
+        changedFilesFormat: "Değişen dosyalar: %d",
+        costFormat: "Maliyet: %@")
 
     static let ja = NotchAgentStrings(
         title: "AIエージェント",
@@ -1855,7 +1964,15 @@ extension NotchAgentStrings {
         send: "送信",
         next: "次へ",
         ok: "OK",
-        cancelTyping: "キャンセル")
+        cancelTyping: "キャンセル",
+        listLayout: "リスト",
+        gridLayout: "タイル",
+        subagentsFormat: "サブエージェント %d",
+        recentActions: "最近の操作",
+        showAll: "すべて表示",
+        showLess: "表示を減らす",
+        changedFilesFormat: "変更ファイル %d",
+        costFormat: "コスト %@")
 
     static let ko = NotchAgentStrings(
         title: "AI 에이전트",
@@ -1999,7 +2116,15 @@ extension NotchAgentStrings {
         send: "보내기",
         next: "다음",
         ok: "확인",
-        cancelTyping: "취소")
+        cancelTyping: "취소",
+        listLayout: "목록",
+        gridLayout: "타일",
+        subagentsFormat: "하위 에이전트 %d개",
+        recentActions: "최근 작업",
+        showAll: "모두 보기",
+        showLess: "간단히 보기",
+        changedFilesFormat: "변경된 파일 %d개",
+        costFormat: "비용 %@")
 
     static let zhHans = NotchAgentStrings(
         title: "AI 智能体",
@@ -2143,7 +2268,15 @@ extension NotchAgentStrings {
         send: "发送",
         next: "下一个",
         ok: "好",
-        cancelTyping: "取消")
+        cancelTyping: "取消",
+        listLayout: "列表",
+        gridLayout: "磁贴",
+        subagentsFormat: "%d 个子代理",
+        recentActions: "最近操作",
+        showAll: "显示全部",
+        showLess: "收起",
+        changedFilesFormat: "已更改 %d 个文件",
+        costFormat: "费用 %@")
 
     static let zhTW = NotchAgentStrings(
         title: "AI 代理",
@@ -2287,7 +2420,15 @@ extension NotchAgentStrings {
         send: "送出",
         next: "下一個",
         ok: "好",
-        cancelTyping: "取消")
+        cancelTyping: "取消",
+        listLayout: "列表",
+        gridLayout: "方塊",
+        subagentsFormat: "%d 個子代理",
+        recentActions: "最近動作",
+        showAll: "顯示全部",
+        showLess: "收合",
+        changedFilesFormat: "已變更 %d 個檔案",
+        costFormat: "費用 %@")
 
     static let zhHK = NotchAgentStrings(
         title: "AI 代理",
@@ -2431,5 +2572,13 @@ extension NotchAgentStrings {
         send: "送出",
         next: "下一個",
         ok: "好",
-        cancelTyping: "取消")
+        cancelTyping: "取消",
+        listLayout: "列表",
+        gridLayout: "方塊",
+        subagentsFormat: "%d 個子代理",
+        recentActions: "最近動作",
+        showAll: "顯示全部",
+        showLess: "收合",
+        changedFilesFormat: "已更改 %d 個檔案",
+        costFormat: "費用 %@")
 }

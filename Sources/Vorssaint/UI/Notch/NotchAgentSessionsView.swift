@@ -9,13 +9,6 @@ extension AgentProcessKind {
     var tint: Color { provider?.tint ?? Color(red: 0.66, green: 0.52, blue: 0.95) }
 }
 
-private let sessionMemory: ByteCountFormatter = {
-    let formatter = ByteCountFormatter()
-    formatter.countStyle = .memory
-    formatter.allowedUnits = [.useMB, .useGB]
-    return formatter
-}()
-
 /// A changed file of a session, opened in full on the Live tab.
 struct AgentDiffTarget: Equatable {
     let session: String
@@ -70,7 +63,9 @@ struct NotchAgentSessionsList: View {
     @ObservedObject private var usage = AgentUsageService.shared
     @Environment(\.locale) private var locale
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var selected: String?
+    @AppStorage(DefaultsKey.notchAgentsSessionLayout) private var layout = NotchAgentSessionLayout.list.rawValue
+    /// The cards opened, and the sessions with subagents closed.
+    @State private var toggled: Set<String> = []
 
     var body: some View {
         let sessions = preview ? AgentSessionsSupport.sample(now: Date())
@@ -98,12 +93,16 @@ struct NotchAgentSessionsList: View {
                     VStack(alignment: .leading, spacing: 6) {
                         if !sessions.isEmpty {
                             TimelineView(.periodic(from: .now, by: 1)) { context in
-                                NotchAgentSessionRows(sessions: sessions, turns: turns, now: context.date, text: text,
-                                                      preview: preview, selected: $selected) { session, file in
+                                NotchAgentSessionCards(sessions: sessions, turns: turns, now: context.date, text: text,
+                                                       preview: preview, width: size.width,
+                                                       layout: NotchAgentSessionLayout(rawValue: layout) ?? .list,
+                                                       toggled: $toggled) { session, file in
                                     withAnimation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.88)) {
                                         diff = AgentDiffTarget(session: session.id, path: file.path)
                                     }
                                 }
+                                .id(layout)
+                                .transition(.opacity)
                             }
                         }
                         if !orphans.isEmpty { self.orphans }
@@ -643,365 +642,6 @@ private struct NotchAgentApprovalCountdown: View {
             .scaleEffect(x: running ? 0 : left / wait, y: 1, anchor: .leading)
             .onAppear { withAnimation(.linear(duration: left)) { running = true } }
             .accessibilityHidden(true)
-    }
-}
-
-/// Sessions one under another, a tapped one offering to end it.
-private struct NotchAgentSessionRows: View {
-    let sessions: [AgentSession]
-    /// The usage turn each log is having, for its model and cost.
-    let turns: [String: AgentLiveSession]
-    let now: Date
-    let text: NotchAgentStrings
-    let preview: Bool
-    @Binding var selected: String?
-    let open: (AgentSession, AgentFileDiff) -> Void
-    @ObservedObject private var features = FeatureRuntime.shared
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    /// Ending a session needs the Kill Process feature, as freeing a port does;
-    /// read again when features change.
-    private var canEnd: Bool {
-        _ = features.revision
-        return !preview && AppFeature.killProcess.isAvailable
-    }
-
-    var body: some View {
-        let canEnd = canEnd
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(sessions) { session in
-                NotchAgentSessionRow(session: session, turn: session.log.flatMap { turns[$0] }, now: now, text: text,
-                                     preview: preview,
-                                     canEnd: canEnd && !session.isSubagent, selected: selected == session.id,
-                                     open: { open(session, $0) }) {
-                    withAnimation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.86)) {
-                        selected = selected == session.id ? nil : session.id
-                    }
-                }
-            }
-        }
-        // A session that ended takes its selection with it.
-        .onChange(of: sessions.map(\.id)) { _, ids in
-            if let current = selected, !ids.contains(current) { selected = nil }
-        }
-    }
-}
-
-private struct NotchAgentSessionRow: View {
-    let session: AgentSession
-    let turn: AgentLiveSession?
-    let now: Date
-    let text: NotchAgentStrings
-    let preview: Bool
-    let canEnd: Bool
-    let selected: Bool
-    let open: (AgentFileDiff) -> Void
-    let toggle: () -> Void
-
-    private var statusText: String {
-        switch session.status {
-        case .working: return text.working
-        case .waiting: return text.waiting
-        case .asking: return text.asking
-        }
-    }
-    private var activity: String? { session.isSubagent ? nil : text.activity(of: session) }
-    private var endLabel: String { text.endSession(session.kind.displayName + " " + folder) }
-    private var elapsed: String { session.started.map { AgentFormat.clock(now.timeIntervalSince($0)) } ?? "" }
-    private var folder: String {
-        if session.isSubagent { return session.title ?? session.kind.displayName }
-        return session.folder.isEmpty ? session.kind.displayName : session.folder
-    }
-
-    /// The app it runs in; a background session has none to show.
-    private var showLabel: String? {
-        session.host.flatMap { session.isSubagent ? nil : text.showIn($0.name) }
-    }
-
-    /// The turn's model and cost.
-    private var model: String? {
-        guard let turn else { return nil }
-        let parts = [AgentPricing.displayName(turn.model), turn.cost > 0 ? AgentFormat.cost(turn.cost) : ""]
-            .filter { !$0.isEmpty }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
-    }
-
-    private func end() { AgentSessionsService.shared.kill(session) }
-
-    private func show() {
-        NotchService.shared.collapse()
-        AgentSessionsService.shared.show(session)
-    }
-
-    private static let radius: CGFloat = 14
-    private static let inset: CGFloat = 12
-    private static let glyphSize: CGFloat = 11
-    private static let hostWidth: CGFloat = 60
-    /// The host's name past this many characters ends in an ellipsis.
-    private static let hostNameLimit = 6
-    private static let column: CGFloat = 10
-    private static let firstRow: CGFloat = 18
-    private static let secondRow: CGFloat = 15
-    /// Past the mark and the host, where the name and all under it start.
-    private static let mainIndent: CGFloat = glyphSize * 1.45 + 1 + column + hostWidth + column
-
-    var body: some View {
-        let shape = RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                header
-                buttons.padding(.trailing, Self.inset)
-            }
-            // Ending waits for the card to be picked, under the way to open it.
-            if selected && (hasDetails || canEnd) {
-                HStack(alignment: .bottom, spacing: 8) {
-                    details.frame(maxWidth: .infinity, alignment: .leading)
-                    if canEnd { round("xmark", endLabel, action: end) }
-                }
-                .padding(.leading, Self.inset + Self.mainIndent)
-                .padding(.trailing, Self.inset)
-                .padding(.bottom, 9)
-                .transition(.opacity.combined(with: .offset(y: -6)))
-            }
-        }
-        .modifier(NotchControlSurface(cornerRadius: Self.radius, selected: selected, interactive: false))
-        .overlay { shape.strokeBorder(session.kind.tint.opacity(selected ? 0.45 : 0)).allowsHitTesting(false) }
-        .padding(.leading, CGFloat(session.depth) * 14)
-    }
-
-    /// The card's top, picked as a whole; a subagent's only says what it is.
-    @ViewBuilder private var header: some View {
-        let summary = summary
-            .padding(.leading, Self.inset)
-            .padding(.vertical, 9)
-            .contentShape(Rectangle())
-        if session.isSubagent {
-            summary.accessibilityElement(children: .combine)
-        } else {
-            Button(action: toggle) { summary }
-                .buttonStyle(NotchButtonStyle(cornerRadius: Self.radius, lifts: false, highlights: false))
-                .accessibilityLabel([session.kind.displayName, session.host?.name ?? text.background, folder, statusText,
-                                     activity ?? ""].filter { !$0.isEmpty }.joined(separator: ", "))
-                .accessibilityValue(elapsed)
-                .accessibilityAddTraits(selected ? .isSelected : [])
-                // VoiceOver reaches ending without revealing its button.
-                .accessibilityActions {
-                    if let showLabel, !preview { Button(showLabel, action: show) }
-                    if canEnd { Button(endLabel, action: end) }
-                }
-        }
-    }
-
-    /// Opening is always at hand.
-    @ViewBuilder private var buttons: some View {
-        if let showLabel {
-            round("arrow.up.forward", showLabel, action: show).disabled(preview)
-        } else {
-            // A card with nothing to open keeps its time in the column.
-            Color.clear.frame(width: 22, height: 22)
-        }
-    }
-
-    /// The agent's mark, then in columns every card shares: where it runs
-    /// over what it holds, its folder over what it does now, and how long.
-    private var summary: some View {
-        HStack(spacing: Self.column) {
-            glyph
-            HStack(alignment: .top, spacing: Self.column) {
-                if !session.isSubagent {
-                    VStack(alignment: .leading, spacing: 3) {
-                        host.frame(height: Self.firstRow)
-                        if session.memory > 0 {
-                            Text(sessionMemory.string(fromByteCount: session.memory))
-                                .font(.system(size: 11))
-                                .foregroundStyle(.tertiary)
-                                .monospacedDigit()
-                                .lineLimit(1)
-                                .frame(height: Self.secondRow)
-                        }
-                    }
-                    .frame(width: Self.hostWidth, alignment: .leading)
-                }
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        name
-                        ports
-                    }
-                    .frame(height: Self.firstRow)
-                    if let activity { activityLine(activity).frame(height: Self.secondRow) }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                HStack(spacing: 5) {
-                    status
-                    time
-                }
-                .frame(height: Self.firstRow)
-            }
-        }
-    }
-
-    private func round(_ symbol: String, _ label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(.white.opacity(0.75))
-                .frame(width: 22, height: 22)
-                .background(.white.opacity(0.1), in: Circle())
-                .contentShape(Circle())
-        }
-        .buttonStyle(NotchButtonStyle(cornerRadius: 11))
-        .help(label)
-        .accessibilityLabel(label)
-    }
-
-    /// What the session does now, under its folder, and the lines it changed.
-    private func activityLine(_ activity: String) -> some View {
-        HStack(spacing: 5) {
-            Text(activity)
-                .foregroundStyle(session.status == .asking ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            if let files = session.activity?.files, !files.isEmpty {
-                NotchAgentDiffCounts(added: files.reduce(0) { $0 + $1.added }, removed: files.reduce(0) { $0 + $1.removed },
-                                     size: 11)
-            }
-        }
-        .font(.system(size: 11))
-        .help(session.waitingFor ?? activity)
-    }
-
-    /// The turn's model and cost, the prompt it answers, the latest reply and
-    /// the files changed, for a picked session.
-    private var hasDetails: Bool {
-        let activity = session.activity
-        return model != nil || activity?.prompt != nil || activity?.reply != nil || activity?.files.isEmpty == false
-    }
-
-    @ViewBuilder private var details: some View {
-        let activity = session.activity
-        if hasDetails {
-            VStack(alignment: .leading, spacing: 3) {
-                if let model { detail("cpu", model) }
-                if let prompt = activity?.prompt { detail("person.fill", prompt) }
-                if let reply = activity?.reply { detail("text.bubble", reply) }
-                ForEach(activity?.files ?? []) { file in
-                    link("doc.text", file.name, action: { open(file) }) {
-                        NotchAgentDiffCounts(added: file.added, removed: file.removed, size: 10.5)
-                        Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold)).foregroundStyle(.tertiary)
-                    }
-                    .help(file.path)
-                }
-            }
-        }
-    }
-
-    private func link(_ symbol: String, _ title: String, action: @escaping () -> Void,
-                      @ViewBuilder trailing: () -> some View) -> some View {
-        Button(action: action) {
-            HStack(spacing: 5) {
-                Image(systemName: symbol).font(.system(size: 9.5)).foregroundStyle(.tertiary)
-                Text(title).font(.system(size: 11, weight: .medium)).lineLimit(1).truncationMode(.middle)
-                Spacer(minLength: 4)
-                trailing()
-            }
-            .frame(height: 18)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(NotchButtonStyle(cornerRadius: 5, lifts: false))
-    }
-
-    private func detail(_ symbol: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 5) {
-            Image(systemName: symbol).font(.system(size: 9.5)).foregroundStyle(.tertiary).accessibilityHidden(true)
-            Text(value).font(.system(size: 11)).foregroundStyle(.white.opacity(0.75)).lineLimit(2)
-        }
-    }
-
-    @ViewBuilder private var name: some View {
-        if session.isSubagent {
-            Text(folder)
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-        } else {
-            Text(folder)
-                .font(.system(size: 13, weight: .semibold))
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .help([session.title, session.cwd].compactMap { $0 }.joined(separator: "\n"))
-        }
-    }
-
-    /// As wide as the longest usual time, so the status dots line up.
-    private var time: some View {
-        ZStack(alignment: .trailing) {
-            Text("00:00:00").hidden()
-            Text(elapsed).foregroundStyle(session.kind.tint)
-        }
-        .font(.system(size: 11.5, weight: .medium))
-        .monospacedDigit()
-        .lineLimit(1)
-    }
-
-    @ViewBuilder private var glyph: some View {
-        if let provider = session.kind.provider {
-            NotchAgentGlyph(provider: provider, size: Self.glyphSize, working: session.status == .working)
-        } else {
-            Image(systemName: session.kind.symbol)
-                .font(.system(size: Self.glyphSize, weight: .semibold))
-                .foregroundStyle(session.kind.tint)
-                .frame(width: Self.glyphSize * 1.45 + 1, height: Self.glyphSize * 1.45 + 1)
-                .accessibilityHidden(true)
-        }
-    }
-
-    @ViewBuilder private var host: some View {
-        if let host = session.host {
-            HStack(spacing: 4) {
-                // The example rows have no app to take an icon from.
-                if host.pid > 0 {
-                    Image(nsImage: ResponsibleProcess.icon(for: host.pid, pointSize: 18)).resizable().frame(width: 18, height: 18)
-                } else {
-                    Image(systemName: "terminal").font(.system(size: 12)).frame(width: 18, height: 18)
-                }
-                Text(AgentActivitySupport.line(host.name, limit: Self.hostNameLimit) ?? host.name)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            .help(host.name)
-        } else {
-            Text(text.background)
-                .font(.system(size: 11))
-                .foregroundStyle(.tertiary)
-                .lineLimit(1)
-        }
-    }
-
-    @ViewBuilder private var ports: some View {
-        let numbers = Array(Set(session.ports.map(\.port))).sorted()
-        HStack(spacing: 3) {
-            ForEach(numbers.prefix(2), id: \.self) { NotchAgentChip(text: ":\($0)", tint: session.kind.tint) }
-            if numbers.count > 2 { NotchAgentChip(text: "+\(numbers.count - 2)", tint: session.kind.tint) }
-        }
-        .fixedSize()
-        .help(numbers.map { ":\($0)" }.joined(separator: " "))
-    }
-
-    private var status: some View {
-        Group {
-            if session.status == .working {
-                NotchAgentPulse(tint: session.kind.tint, size: 4)
-            } else if session.status == .asking {
-                Circle().fill(.orange).frame(width: 7, height: 7)
-            } else {
-                Circle().fill(.white.opacity(0.28)).frame(width: 7, height: 7)
-            }
-        }
-        .frame(width: 10, height: 10)
-        .help(statusText)
     }
 }
 
