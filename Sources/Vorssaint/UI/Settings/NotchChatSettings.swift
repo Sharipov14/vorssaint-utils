@@ -257,11 +257,11 @@ private struct ChatProviderRow: View {
                 let stream = NotchChatClient.stream(provider: provider, model: model,
                                                     messages: [ChatMessage(role: .user, text: "Hi")],
                                                     system: "Reply in a few words.")
-                for try await piece in stream {
+                for try await case .text(let piece) in stream {
                     reply += piece
-                    if reply.count > 80 { break }
+                    if reply.count > 200 { break }
                 }
-                let answer = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+                let answer = NotchChatSupport.split(reply).answer
                 status = answer.isEmpty ? text.testWorks : "\(text.testWorks): \(answer.prefix(80))"
             } catch is CancellationError {
             } catch {

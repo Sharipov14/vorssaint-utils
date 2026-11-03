@@ -101,6 +101,7 @@ struct NotchChatView: View {
                 .scrollIndicators(.automatic)
                 .onAppear { proxy.scrollTo(Self.bottom, anchor: .bottom) }
                 .onChange(of: chat.messages.last?.text) { _, _ in proxy.scrollTo(Self.bottom, anchor: .bottom) }
+                .onChange(of: chat.messages.last?.reasoning) { _, _ in proxy.scrollTo(Self.bottom, anchor: .bottom) }
                 .onChange(of: chat.phase) { _, _ in
                     withAnimation(spring) { proxy.scrollTo(Self.bottom, anchor: .bottom) }
                 }
@@ -301,16 +302,22 @@ private struct NotchChatReply: View {
     @State private var hovering = false
     @State private var copied: String?
 
+    @State private var showsThinking = false
+    private var text: NotchChatStrings { FeatureStrings.notchChat(l10n.language) }
+
     var body: some View {
-        let shown = NotchChatSupport.visible(message.text)
-        let blocks = NotchChatSupport.blocks(shown)
+        let (inline, answer) = NotchChatSupport.split(message.text)
+        let reasoning = [message.reasoning.trimmingCharacters(in: .whitespacesAndNewlines), inline]
+            .filter { !$0.isEmpty }.joined(separator: "\n\n")
+        let blocks = NotchChatSupport.blocks(answer)
         VStack(alignment: .leading, spacing: 6) {
+            if !reasoning.isEmpty { thinkingBlock(reasoning) }
             ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
                 let last = index == blocks.count - 1
                 switch block {
                 case .text(let prose):
                     if streaming && last {
-                        cursorText(prose)
+                        typingText(prose)
                     } else {
                         Text(Self.markdown(prose))
                     }
@@ -318,10 +325,9 @@ private struct NotchChatReply: View {
                     codeCard(language: language, code: code)
                 }
             }
-            // A reasoning model still thinking has nothing to show yet.
-            if blocks.isEmpty, streaming { NotchChatTypingDots() }
-            if !streaming, !shown.isEmpty {
-                copyButton(shown, id: "reply")
+            if blocks.isEmpty, streaming, reasoning.isEmpty { NotchChatTypingDots() }
+            if !streaming, !answer.isEmpty {
+                copyButton(answer, id: "reply")
                     .opacity(hovering || copied == "reply" ? 1 : 0)
             }
         }
@@ -337,15 +343,102 @@ private struct NotchChatReply: View {
         .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: hovering)
     }
 
-    /// The words so far with a cursor after them, blinking unless motion is reduced.
-    private func cursorText(_ prose: String) -> some View {
-        TimelineView(.periodic(from: .now, by: 0.5)) { context in
-            let on = reduceMotion || Int(context.date.timeIntervalSinceReferenceDate * 2) % 2 == 0
-            var cursor = AttributedString(" ▍")
-            cursor.foregroundColor = .white.opacity(on ? 0.7 : 0)
-            return Text(Self.markdown(prose) + cursor)
+    // MARK: Thinking
+
+    /// Still thinking: no word of the answer yet.
+    private var thinkingNow: Bool { streaming && message.thought == nil }
+
+    /// Closed by default, as the answer is what was asked for. While the
+    /// model thinks, its latest line runs under the title.
+    private func thinkingBlock(_ reasoning: String) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Button {
+                withAnimation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.86)) { showsThinking.toggle() }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "sparkles").font(.system(size: 10, weight: .semibold))
+                    thinkingTitle
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 8, weight: .bold))
+                        .rotationEffect(.degrees(showsThinking ? 90 : 0))
+                }
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.white.opacity(0.55))
+                .frame(height: 20)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(showsThinking ? Text(reasoning) : Text(""))
+            if showsThinking {
+                Text(Self.markdown(reasoning))
+                    .font(.system(size: textSize - 1.5))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .lineSpacing(1.5)
+                    .padding(.leading, 10)
+                    .overlay(alignment: .leading) {
+                        Capsule().fill(.white.opacity(0.15)).frame(width: 2)
+                    }
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            } else if thinkingNow, let line = Self.lastLine(reasoning) {
+                Text(line)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.35))
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                    .id(line)
+                    .transition(.opacity)
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: line)
+                    .accessibilityHidden(true)
+            }
+        }
+        .clipped()
+    }
+
+    /// "Thinking… 4 s" with a light passing over it while it lasts, then
+    /// how long it took.
+    @ViewBuilder private var thinkingTitle: some View {
+        if thinkingNow {
+            TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { context in
+                let seconds = message.thinkingSince.map { Int(context.date.timeIntervalSince($0)) } ?? 0
+                let phase = reduceMotion ? 0.5 : context.date.timeIntervalSinceReferenceDate
+                    .truncatingRemainder(dividingBy: 1.8) / 1.8 * 1.6 - 0.3
+                Text(seconds > 0 ? "\(text.thinking) \(seconds) s" : text.thinking)
+                    .monospacedDigit()
+                    .foregroundStyle(LinearGradient(colors: [.white.opacity(0.45), .white.opacity(0.95), .white.opacity(0.45)],
+                                                    startPoint: UnitPoint(x: phase - 0.25, y: 0.5),
+                                                    endPoint: UnitPoint(x: phase + 0.25, y: 0.5)))
+            }
+        } else {
+            Text(text.thought(max(1, Int((message.thought ?? 0).rounded()))))
         }
     }
+
+    private static func lastLine(_ text: String) -> String? {
+        text.split(whereSeparator: \.isNewline).last.map { String($0).trimmingCharacters(in: .whitespaces) }
+            .flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    // MARK: Typing
+
+    /// The newest letters come up out of the dark, so the text grows like
+    /// writing rather than jumping.
+    private func typingText(_ prose: String) -> some View {
+        var shown = Self.markdown(prose)
+        if !reduceMotion {
+            let characters = shown.characters
+            var index = characters.endIndex
+            var step = 0
+            while index > characters.startIndex, step < Self.fadeLength {
+                let previous = characters.index(before: index)
+                step += 1
+                shown[previous..<index].foregroundColor = .white.opacity(0.9 * Double(step) / Double(Self.fadeLength + 1))
+                index = previous
+            }
+        }
+        return Text(shown)
+    }
+
+    private static let fadeLength = 14
 
     private func codeCard(language: String, code: String) -> some View {
         VStack(alignment: .leading, spacing: 0) {

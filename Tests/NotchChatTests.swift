@@ -72,10 +72,22 @@ enum NotchChatTests {
                         && anthropic?.value(forHTTPHeaderField: "x-api-key") == "ak"
                         && anthropic?.value(forHTTPHeaderField: "anthropic-version") == NotchChatSupport.anthropicVersion
                         && anthropic?.value(forHTTPHeaderField: "Authorization") == nil
-                        && anthropicBody["max_tokens"] as? Int == NotchChatSupport.anthropicMaxTokens
+                        && anthropicBody["max_tokens"] as? Int == NotchChatSupport.anthropicThinkingMaxTokens
+                        && (anthropicBody["thinking"] as? [String: String]) == ["type": "adaptive", "display": "summarized"]
                         && anthropicBody["system"] as? String == "Be brief"
                         && (anthropicBody["messages"] as? [[String: String]])?.count == 3,
-                     "an Anthropic request carries its key, version, token cap and a separate system prompt")
+                     "an Anthropic request carries its key, version, token cap, thinking and a separate system prompt")
+        let plain = (try? NotchChatSupport.request(provider: ChatPreset.named("anthropic")!.provider(), model: "claude",
+                                                   messages: messages, system: "", key: "ak", thinking: false)).map(body) ?? [:]
+        suite.expect(plain["thinking"] == nil && plain["max_tokens"] as? Int == NotchChatSupport.anthropicMaxTokens
+                        && openAIBody["extra_body"] == nil,
+                     "a model that refuses thinking is asked again without it, and other servers are never asked")
+        let thought = [ChatMessage(role: .user, text: "Q"), ChatMessage(role: .assistant, text: "<think>hm</think>A"),
+                       ChatMessage(role: .user, text: "Q2")]
+        let resent = (try? NotchChatSupport.request(provider: custom("https://llm.example.com/v1"), model: "a",
+                                                    messages: thought, system: "", key: "")).map(body)?["messages"]
+        suite.expect((resent as? [[String: String]])?[1] == ["role": "assistant", "content": "A"],
+                     "an earlier reply goes back without its thinking")
         suite.expect(throwsFailure(.missingKey) {
             try NotchChatSupport.request(provider: ChatPreset.named("openAI")!.provider(), model: "m",
                                          messages: messages, system: "", key: "  ")
@@ -120,8 +132,17 @@ enum NotchChatTests {
             #"data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}"#,
             #"data: {"type":"message_stop"}"#,
         ]
-        suite.expect(anthropic.compactMap { NotchChatSupport.event(line: $0, wire: .anthropic) } == [.text("Hello"), .done],
-                     "an Anthropic stream yields only its text, not pings or thinking")
+        suite.expect(anthropic.compactMap { NotchChatSupport.event(line: $0, wire: .anthropic) }
+                        == [.reasoning("hmm"), .text("Hello"), .done],
+                     "an Anthropic stream yields its thinking and its text, not pings")
+        let reasoning = [
+            #"data: {"choices":[{"delta":{"reasoning_content":"Думаю"}}]}"#,
+            #"data: {"choices":[{"delta":{"reasoning":" ещё","content":null}}]}"#,
+            #"data: {"choices":[{"delta":{"content":"Ответ","reasoning":""}}]}"#,
+        ]
+        suite.expect(reasoning.compactMap { NotchChatSupport.event(line: $0, wire: .openAI) }
+                        == [.reasoning("Думаю"), .reasoning(" ещё"), .text("Ответ")],
+                     "an OpenAI-compatible stream's reasoning is read under either name")
         suite.expect(NotchChatSupport.event(line: #"data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#,
                                             wire: .anthropic) == .error("Overloaded")
                         && NotchChatSupport.event(line: #"data: {"error":{"message":"Ошибка"}}"#, wire: .openAI) == .error("Ошибка")
@@ -156,11 +177,20 @@ enum NotchChatTests {
     }
 
     private static func replyContracts(_ suite: TestSuite) {
-        suite.expect(NotchChatSupport.visible("<think>plan</think>\n\nHello") == "Hello"
-                        && NotchChatSupport.visible("Hi <think>still going") == "Hi"
-                        && NotchChatSupport.visible("<think>a</think>One<think>b</think> two") == "One two"
-                        && NotchChatSupport.visible("plain") == "plain",
-                     "a model's thinking is hidden, closed or still open")
+        let closed = NotchChatSupport.split("<think>plan</think>\n\nHello")
+        let open = NotchChatSupport.split("Hi <think>still going")
+        let gemini = NotchChatSupport.split("<thought>a</thought>One<think>b</think> two")
+        suite.expect(closed == ("plan", "Hello") && open == ("still going", "Hi")
+                        && gemini == ("a\n\nb", "One two") && NotchChatSupport.split("plain") == ("", "plain"),
+                     "a model's thinking is set apart from its answer, closed or still open")
+        let words = "Привет, мир, это длинная строка текста"
+        let first = NotchChatSupport.reveal(words, shown: 0, frame: 1.0 / 30)
+        suite.expect(first == 7 && NotchChatSupport.reveal(words, shown: words.count, frame: 1.0 / 30) == words.count,
+                     "typing shows a word whole and stops at the end")
+        let flood = String(repeating: "a ", count: 2000)
+        let caughtUp = (0..<16).reduce(0) { shown, _ in NotchChatSupport.reveal(flood, shown: shown, frame: 1.0 / 30) }
+        suite.expect(caughtUp > flood.count / 2 && NotchChatSupport.reveal("ab", shown: 0, frame: 1.0 / 30) == 2,
+                     "typing speeds up when much is waiting, so it never trails the model for long")
         let reply = "Run this:\n```swift\nlet a = 1\n  print(a)\n```\nDone."
         suite.expect(NotchChatSupport.blocks(reply) == [.text("Run this:"), .code(language: "swift", code: "let a = 1\n  print(a)"),
                                                         .text("Done.")],

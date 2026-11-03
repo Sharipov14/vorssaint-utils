@@ -15,35 +15,46 @@ enum NotchChatClient {
     /// A failed reply's body is read this far, enough for any error message.
     private static let errorBodyLimit = 16_384
 
-    /// The reply as it arrives, piece by piece. Cancelling the consuming task
-    /// closes the connection.
+    /// The reply as it arrives, piece by piece: `.text` and `.reasoning`.
+    /// Cancelling the consuming task closes the connection.
     static func stream(provider: ChatProvider, model: String, messages: [ChatMessage],
-                       system: String) -> AsyncThrowingStream<String, Error> {
+                       system: String) -> AsyncThrowingStream<ChatStreamEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let request = try NotchChatSupport.request(provider: provider, model: model, messages: messages,
-                                                               system: system, key: ChatKeychain.key(for: provider))
-                    let (bytes, response) = try await session.bytes(for: request)
-                    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                    if status / 100 != 2 {
-                        var body = Data()
-                        for try await byte in bytes {
-                            body.append(byte)
-                            if body.count >= errorBodyLimit { break }
+                    var thinking = true
+                    while true {
+                        let request = try NotchChatSupport.request(provider: provider, model: model, messages: messages,
+                                                                   system: system, key: ChatKeychain.key(for: provider),
+                                                                   thinking: thinking)
+                        let (bytes, response) = try await session.bytes(for: request)
+                        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                        if status / 100 != 2 {
+                            var body = Data()
+                            for try await byte in bytes {
+                                body.append(byte)
+                                if body.count >= errorBodyLimit { break }
+                            }
+                            // An older model refuses the thinking settings; it answers without them.
+                            if status == 400, thinking, NotchChatSupport.asksThinking(provider) {
+                                thinking = false
+                                continue
+                            }
+                            throw NotchChatSupport.failure(status: status, body: body) ?? NotchChatFailure.badResponse
                         }
-                        throw NotchChatSupport.failure(status: status, body: body) ?? NotchChatFailure.badResponse
-                    }
-                    for try await line in bytes.lines {
-                        switch NotchChatSupport.event(line: line, wire: provider.wire) {
-                        case .text(let text): continuation.yield(text)
-                        case .done: continuation.finish(); return
-                        case .error(let message): throw NotchChatFailure.server(status, message.isEmpty ? nil : message)
-                        case nil: continue
+                        for try await line in bytes.lines {
+                            switch NotchChatSupport.event(line: line, wire: provider.wire) {
+                            case .text(let text): continuation.yield(.text(text))
+                            case .reasoning(let text): continuation.yield(.reasoning(text))
+                            case .done: continuation.finish(); return
+                            case .error(let message): throw NotchChatFailure.server(status, message.isEmpty ? nil : message)
+                            case nil: continue
+                            }
                         }
+                        // Some servers close the stream without a closing event.
+                        continuation.finish()
+                        return
                     }
-                    // Some servers close the stream without a closing event.
-                    continuation.finish()
                 } catch {
                     continuation.finish(throwing: mapped(error))
                 }

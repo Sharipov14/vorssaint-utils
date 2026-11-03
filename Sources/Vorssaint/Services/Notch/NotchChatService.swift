@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Vorssaint
 
-import Foundation
+import AppKit
 
 /// The chat on the AI page: one conversation, kept in memory only, so it
 /// outlives the island closing but not the app quitting. Nothing of it is
@@ -81,6 +81,16 @@ final class NotchChatService: ObservableObject {
         phase = .idle
     }
 
+    /// What has come in from the server, ahead of what the page shows.
+    private final class Feed {
+        var text = ""
+        var reasoning = ""
+        var failure: NotchChatFailure?
+        var done = false
+    }
+
+    /// The reply is read as fast as it comes and typed out frame by frame,
+    /// so bursts from the network read as steady writing.
     private func start() {
         guard let (provider, model) = selection, messages.last?.role == .user else { return }
         phase = .waiting
@@ -88,40 +98,70 @@ final class NotchChatService: ObservableObject {
         let current = turn
         let history = messages
         task = Task { @MainActor [weak self] in
-            var reply = ""
-            var shown = Date.distantPast
-            var failure: NotchChatFailure?
-            do {
-                for try await piece in NotchChatClient.stream(provider: provider, model: model, messages: history,
-                                                              system: Self.systemPrompt) {
-                    reply += piece
-                    // About fifteen redraws a second, however fast the words come.
-                    if Date().timeIntervalSince(shown) >= 1.0 / 15, self?.turn == current {
-                        self?.show(reply)
-                        shown = Date()
+            let feed = Feed()
+            let reader = Task { @MainActor in
+                do {
+                    for try await event in NotchChatClient.stream(provider: provider, model: model, messages: history,
+                                                                  system: Self.systemPrompt) {
+                        switch event {
+                        case .text(let piece): feed.text += piece
+                        case .reasoning(let piece): feed.reasoning += piece
+                        default: break
+                        }
                     }
+                } catch is CancellationError {
+                } catch {
+                    feed.failure = error as? NotchChatFailure ?? .badResponse
                 }
-            } catch is CancellationError {
-            } catch {
-                failure = error as? NotchChatFailure ?? .badResponse
+                feed.done = true
             }
-            guard self?.turn == current else { return }
-            self?.finish(reply, failure: failure)
+            var shown = 0
+            await withTaskCancellationHandler {
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(Self.frame))
+                    guard let self, self.turn == current, !Task.isCancelled else { break }
+                    // Under Reduce Motion the words appear as they come.
+                    shown = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+                        ? feed.text.count : NotchChatSupport.reveal(feed.text, shown: shown, frame: Self.frame)
+                    self.show(String(feed.text.prefix(shown)), reasoning: feed.reasoning)
+                    if feed.done, shown >= feed.text.count { break }
+                }
+            } onCancel: {
+                reader.cancel()
+            }
+            // Stopped: everything that came in so far stays.
+            await reader.value
+            guard let self, self.turn == current else { return }
+            self.show(feed.text, reasoning: feed.reasoning)
+            self.finish(failure: feed.failure)
         }
     }
 
-    private func show(_ reply: String) {
-        guard !reply.isEmpty else { return }
+    private static let frame: TimeInterval = 1.0 / 30
+
+    private func show(_ reply: String, reasoning: String) {
+        guard !reply.isEmpty || !reasoning.isEmpty else { return }
         if phase == .waiting {
-            messages.append(ChatMessage(role: .assistant, text: reply))
+            messages.append(ChatMessage(role: .assistant, text: ""))
             phase = .streaming
-        } else if let last = messages.indices.last, messages[last].role == .assistant {
-            messages[last].text = reply
         }
+        guard let last = messages.indices.last, messages[last].role == .assistant else { return }
+        var message = messages[last]
+        message.text = reply
+        message.reasoning = reasoning
+        let (thinking, answer) = NotchChatSupport.split(reply)
+        if message.thinkingSince == nil, !reasoning.isEmpty || !thinking.isEmpty { message.thinkingSince = Date() }
+        if let since = message.thinkingSince, message.thought == nil, !answer.isEmpty {
+            message.thought = Date().timeIntervalSince(since)
+        }
+        if message != messages[last] { messages[last] = message }
     }
 
-    private func finish(_ reply: String, failure: NotchChatFailure?) {
-        show(reply)
+    private func finish(failure: NotchChatFailure?) {
+        if let last = messages.indices.last, messages[last].role == .assistant,
+           let since = messages[last].thinkingSince, messages[last].thought == nil {
+            messages[last].thought = Date().timeIntervalSince(since)
+        }
         phase = failure.map(Phase.failed) ?? .idle
         task = nil
     }

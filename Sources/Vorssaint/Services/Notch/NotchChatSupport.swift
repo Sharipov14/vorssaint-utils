@@ -60,6 +60,11 @@ struct ChatMessage: Equatable, Identifiable {
     var id = UUID()
     var role: Role
     var text: String
+    /// What the model thought before answering, when the server sends it apart from the text.
+    var reasoning = ""
+    /// When it began thinking, and for how long it did once the answer began.
+    var thinkingSince: Date?
+    var thought: TimeInterval?
 }
 
 /// A piece of a reply as shown: prose, or a fenced code block.
@@ -70,6 +75,7 @@ enum ChatBlock: Equatable {
 
 enum ChatStreamEvent: Equatable {
     case text(String)
+    case reasoning(String)
     case done
     case error(String)
 }
@@ -88,8 +94,11 @@ enum NotchChatFailure: Error, Equatable {
 
 enum NotchChatSupport {
     static let anthropicVersion = "2023-06-01"
-    /// Anthropic requires a ceiling; every current model accepts this one.
+    /// Anthropic requires a ceiling. Thinking counts against it, so a model
+    /// asked to think gets more room; one that refuses thinking is asked
+    /// again with the ceiling every model accepts.
     static let anthropicMaxTokens = 4096
+    static let anthropicThinkingMaxTokens = 16_000
     /// Between two pieces of the reply, not for all of it: a reasoning model
     /// can think a while before its first word.
     static let requestTimeout: TimeInterval = 120
@@ -125,12 +134,20 @@ enum NotchChatSupport {
 
     // MARK: Requests
 
+    /// Servers that think only when asked to. Others send their reasoning
+    /// unasked, or none at all.
+    static func asksThinking(_ provider: ChatProvider) -> Bool {
+        provider.wire == .anthropic || provider.preset == "gemini"
+    }
+
     static func request(provider: ChatProvider, model: String, messages: [ChatMessage],
-                        system: String, key: String) throws -> URLRequest {
+                        system: String, key: String, thinking: Bool = true) throws -> URLRequest {
         let key = key.trimmingCharacters(in: .whitespacesAndNewlines)
         if provider.requiresKey, key.isEmpty { throw NotchChatFailure.missingKey }
         guard let base = NotchTranslateSupport.serverURL(provider.baseURL) else { throw NotchChatFailure.invalidServer }
-        let turns = messages.map { ["role": $0.role.rawValue, "content": $0.text] }
+        // Earlier thinking is not sent back: servers ignore it or refuse it.
+        let turns = messages.map { ["role": $0.role.rawValue, "content": $0.role == .assistant ? split($0.text).answer : $0.text] }
+        let thinks = thinking && asksThinking(provider)
         var request: URLRequest
         var body: [String: Any] = ["model": model, "stream": true]
         switch provider.wire {
@@ -139,10 +156,14 @@ enum NotchChatSupport {
             authorize(&request, wire: .openAI, key: key)
             // No max_tokens: OpenAI's reasoning models refuse it.
             body["messages"] = (system.isEmpty ? [] : [["role": "system", "content": system]]) + turns
+            // Gemini returns its thought summaries only on request.
+            if thinks { body["extra_body"] = ["google": ["thinking_config": ["include_thoughts": true]]] }
         case .anthropic:
             request = URLRequest(url: base.appendingPathComponent("messages"))
             authorize(&request, wire: .anthropic, key: key)
-            body["max_tokens"] = anthropicMaxTokens
+            body["max_tokens"] = thinks ? anthropicThinkingMaxTokens : anthropicMaxTokens
+            // The summary of its reasoning, which current models leave empty unless asked.
+            if thinks { body["thinking"] = ["type": "adaptive", "display": "summarized"] }
             body["messages"] = turns
             if !system.isEmpty { body["system"] = system }
         }
@@ -209,16 +230,22 @@ enum NotchChatSupport {
         if let message = errorMessage(object) { return .error(message) }
         switch wire {
         case .openAI:
-            let choice = (object["choices"] as? [[String: Any]])?.first
-            let text = (choice?["delta"] as? [String: Any])?["content"] as? String
-            return text.flatMap { $0.isEmpty ? nil : .text($0) }
+            let delta = ((object["choices"] as? [[String: Any]])?.first)?["delta"] as? [String: Any]
+            if let text = delta?["content"] as? String, !text.isEmpty { return .text(text) }
+            // DeepSeek and LM Studio name it reasoning_content, OpenRouter and Ollama reasoning.
+            let reasoning = ["reasoning_content", "reasoning", "thinking"].lazy.compactMap { delta?[$0] as? String }.first
+            return reasoning.flatMap { $0.isEmpty ? nil : .reasoning($0) }
         case .anthropic:
             switch object["type"] as? String {
             case "content_block_delta":
                 let delta = object["delta"] as? [String: Any]
-                guard delta?["type"] as? String == "text_delta", let text = delta?["text"] as? String,
-                      !text.isEmpty else { return nil }
-                return .text(text)
+                switch delta?["type"] as? String {
+                case "text_delta":
+                    return (delta?["text"] as? String).flatMap { $0.isEmpty ? nil : .text($0) }
+                case "thinking_delta":
+                    return (delta?["thinking"] as? String).flatMap { $0.isEmpty ? nil : .reasoning($0) }
+                default: return nil
+                }
             case "message_stop": return .done
             default: return nil
             }
@@ -250,18 +277,54 @@ enum NotchChatSupport {
 
     // MARK: Showing a reply
 
-    /// The reply without a reasoning model's `<think>` blocks, one still
-    /// open while it streams included.
-    static func visible(_ text: String) -> String {
+    /// A reply's thinking and its answer. Local models write their thinking
+    /// into the text inside `<think>`, Gemini inside `<thought>`; a block still
+    /// open while it streams is thinking too.
+    static func split(_ text: String) -> (thinking: String, answer: String) {
         var rest = Substring(text)
-        var shown = ""
-        while let open = rest.range(of: "<think>") {
-            shown += rest[..<open.lowerBound]
-            guard let close = rest[open.upperBound...].range(of: "</think>") else { rest = ""; break }
-            rest = rest[close.upperBound...]
+        var thinking: [Substring] = []
+        var answer = ""
+        while let (open, close) = ["think", "thought"].lazy
+            .compactMap({ tag in rest.range(of: "<\(tag)>").map { ($0, "</\(tag)>") } })
+            .min(by: { $0.0.lowerBound < $1.0.lowerBound }) {
+            answer += rest[..<open.lowerBound]
+            guard let end = rest[open.upperBound...].range(of: close) else {
+                thinking.append(rest[open.upperBound...]); rest = ""; break
+            }
+            thinking.append(rest[open.upperBound..<end.lowerBound])
+            rest = rest[end.upperBound...]
         }
-        shown += rest
-        return shown.trimmingCharacters(in: .whitespacesAndNewlines)
+        answer += rest
+        return (thinking.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+                    .joined(separator: "\n\n"),
+                answer.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    // MARK: Typing out a reply
+
+    /// Characters a second when little is waiting.
+    static let revealRate: Double = 90
+    /// However fast the words come, the page is never further behind than this.
+    static let revealCatchUp: TimeInterval = 0.5
+    /// A word is shown whole when it ends within this many characters.
+    static let revealWordReach = 12
+
+    /// How much of `text` to show after one more frame, from `shown`
+    /// characters: steady while the model is slow, faster as words pile up,
+    /// and on to the end of the word it stops in.
+    static func reveal(_ text: String, shown: Int, frame: TimeInterval) -> Int {
+        let total = text.count
+        guard shown < total else { return total }
+        let rate = max(revealRate, Double(total - shown) / revealCatchUp)
+        var end = min(total, shown + max(1, Int((rate * frame).rounded(.up))))
+        var index = text.index(text.startIndex, offsetBy: end)
+        var reach = 0
+        while index < text.endIndex, !text[index].isWhitespace, reach < revealWordReach {
+            index = text.index(after: index)
+            reach += 1
+        }
+        if index == text.endIndex || text[index].isWhitespace { end += reach }
+        return end
     }
 
     /// Prose and fenced code, in order. A fence not yet closed runs to the

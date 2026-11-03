@@ -52,9 +52,11 @@ struct NotchChatStrings {
     let needsSetup: String
     let model: String
     let thinking: String
+    let thoughtFormat: String
 
     func wire(_ wire: ChatWire) -> String { wire == .openAI ? wireOpenAI : wireAnthropic }
     func empty(_ model: String) -> String { String(format: emptyFormat, model) }
+    func thought(_ seconds: Int) -> String { String(format: thoughtFormat, seconds) }
     func fetched(_ count: Int) -> String { String(format: fetchedFormat, count) }
     func modelCount(_ count: Int) -> String { String(format: modelCountFormat, count) }
     func deleteTitle(_ name: String) -> String { String(format: deleteTitleFormat, name) }
@@ -127,7 +129,8 @@ extension FeatureStrings {
             openSettings: "Open Settings",
             needsSetup: "Add a provider and a model in Settings to start chatting.",
             model: "Model",
-            thinking: "Thinking…"
+            thinking: "Thinking…",
+            thoughtFormat: "Thought for %d s"
         )
         case .ptBR: return NotchChatStrings(
             title: "Chat",
@@ -177,7 +180,8 @@ extension FeatureStrings {
             openSettings: "Abrir Ajustes",
             needsSetup: "Adicione um provedor e um modelo nos Ajustes para começar a conversar.",
             model: "Modelo",
-            thinking: "Pensando…"
+            thinking: "Pensando…",
+            thoughtFormat: "Pensou por %d s"
         )
         case .es: return NotchChatStrings(
             title: "Chat",
@@ -227,7 +231,8 @@ extension FeatureStrings {
             openSettings: "Abrir Ajustes",
             needsSetup: "Añade un proveedor y un modelo en Ajustes para empezar a chatear.",
             model: "Modelo",
-            thinking: "Pensando…"
+            thinking: "Pensando…",
+            thoughtFormat: "Pensó durante %d s"
         )
         case .sk: return NotchChatStrings(
             title: "Chat",
@@ -277,7 +282,8 @@ extension FeatureStrings {
             openSettings: "Otvoriť Nastavenia",
             needsSetup: "Pridajte v Nastaveniach poskytovateľa a model a začnite chatovať.",
             model: "Model",
-            thinking: "Premýšľa…"
+            thinking: "Premýšľa…",
+            thoughtFormat: "Premýšľanie: %d s"
         )
         case .de: return NotchChatStrings(
             title: "Chat",
@@ -327,7 +333,8 @@ extension FeatureStrings {
             openSettings: "Einstellungen öffnen",
             needsSetup: "Füge in den Einstellungen einen Anbieter und ein Modell hinzu, um zu chatten.",
             model: "Modell",
-            thinking: "Denkt nach …"
+            thinking: "Denkt nach …",
+            thoughtFormat: "%d s nachgedacht"
         )
         case .fr: return NotchChatStrings(
             title: "Chat",
@@ -377,7 +384,8 @@ extension FeatureStrings {
             openSettings: "Ouvrir les Réglages",
             needsSetup: "Ajoutez un fournisseur et un modèle dans les Réglages pour commencer à discuter.",
             model: "Modèle",
-            thinking: "Réflexion…"
+            thinking: "Réflexion…",
+            thoughtFormat: "Réflexion de %d s"
         )
         case .it: return NotchChatStrings(
             title: "Chat",
@@ -427,7 +435,8 @@ extension FeatureStrings {
             openSettings: "Apri Impostazioni",
             needsSetup: "Aggiungi un fornitore e un modello nelle Impostazioni per iniziare a chattare.",
             model: "Modello",
-            thinking: "Sto pensando…"
+            thinking: "Sto pensando…",
+            thoughtFormat: "Ha pensato per %d s"
         )
         case .ru: return NotchChatStrings(
             title: "Чат",
@@ -477,7 +486,8 @@ extension FeatureStrings {
             openSettings: "Открыть Настройки",
             needsSetup: "Добавьте провайдера и модель в Настройках, чтобы начать чат.",
             model: "Модель",
-            thinking: "Думает…"
+            thinking: "Думает…",
+            thoughtFormat: "Размышления: %d с"
         )
         case .tr: return NotchChatStrings(
             title: "Sohbet",
@@ -527,7 +537,8 @@ extension FeatureStrings {
             openSettings: "Ayarlar’ı Aç",
             needsSetup: "Sohbete başlamak için Ayarlar’da bir sağlayıcı ve model ekleyin.",
             model: "Model",
-            thinking: "Düşünüyor…"
+            thinking: "Düşünüyor…",
+            thoughtFormat: "%d sn düşündü"
         )
         case .ja: return NotchChatStrings(
             title: "チャット",
@@ -577,7 +588,8 @@ extension FeatureStrings {
             openSettings: "設定を開く",
             needsSetup: "チャットを始めるには、設定でプロバイダとモデルを追加してください。",
             model: "モデル",
-            thinking: "考え中…"
+            thinking: "考え中…",
+            thoughtFormat: "%d 秒間考えました"
         )
         case .ko: return NotchChatStrings(
             title: "채팅",
@@ -627,7 +639,8 @@ extension FeatureStrings {
             openSettings: "설정 열기",
             needsSetup: "채팅을 시작하려면 설정에서 제공자와 모델을 추가하세요.",
             model: "모델",
-            thinking: "생각 중…"
+            thinking: "생각 중…",
+            thoughtFormat: "%d초 동안 생각함"
         )
         case .uk: return NotchChatStrings(
             title: "Чат",
@@ -677,7 +690,8 @@ extension FeatureStrings {
             openSettings: "Відкрити Параметри",
             needsSetup: "Додайте провайдера й модель у Параметрах, щоб почати чат.",
             model: "Модель",
-            thinking: "Думає…"
+            thinking: "Думає…",
+            thoughtFormat: "Роздуми: %d с"
         )
         case .zhHans: return NotchChatStrings(
             title: "聊天",
@@ -727,7 +741,8 @@ extension FeatureStrings {
             openSettings: "打开设置",
             needsSetup: "请在设置中添加提供商和模型以开始聊天。",
             model: "模型",
-            thinking: "正在思考…"
+            thinking: "正在思考…",
+            thoughtFormat: "已思考 %d 秒"
         )
         case .zhTW: return NotchChatStrings(
             title: "聊天",
@@ -777,7 +792,8 @@ extension FeatureStrings {
             openSettings: "打開設定",
             needsSetup: "請在設定中加入供應商和模型以開始聊天。",
             model: "模型",
-            thinking: "正在思考…"
+            thinking: "正在思考…",
+            thoughtFormat: "已思考 %d 秒"
         )
         case .zhHK: return NotchChatStrings(
             title: "聊天",
@@ -827,7 +843,8 @@ extension FeatureStrings {
             openSettings: "打開設定",
             needsSetup: "請在設定中加入供應商和模型以開始聊天。",
             model: "模型",
-            thinking: "正在思考…"
+            thinking: "正在思考…",
+            thoughtFormat: "已思考 %d 秒"
         )
         }
     }
