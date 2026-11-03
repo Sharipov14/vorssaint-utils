@@ -130,6 +130,7 @@ struct NotchChatView: View {
             NotchChatReply(message: message,
                            streaming: chat.phase == .streaming && message.id == chat.messages.last?.id,
                            textSize: Self.textSize)
+                .equatable()
         }
     }
 
@@ -245,9 +246,10 @@ struct NotchChatBandControls: View {
 
     var body: some View {
         let _ = (storedProviders, storedModel)
-        let current = chat.selection.map { "\($0.provider.id):\($0.model)" }
+        let selection = chat.selection
+        let current = selection.map { "\($0.provider.id):\($0.model)" }
         HStack(spacing: 2) {
-            if let selection = chat.selection {
+            if let selection {
                 modelMenu(selection)
                 NotchIconButton(symbol: "square.and.pencil", title: text.newChat) { chat.newChat() }
                     .disabled(chat.messages.isEmpty && !chat.isBusy)
@@ -293,10 +295,16 @@ struct NotchChatBandControls: View {
 
 /// An assistant reply: prose as inline Markdown, code in cards of its own,
 /// a model's thinking left out, and a copy button once it is written.
-private struct NotchChatReply: View {
+/// Value inputs let the replies already written skip the frames of the one
+/// being typed out.
+private struct NotchChatReply: View, Equatable {
     let message: ChatMessage
     let streaming: Bool
     let textSize: CGFloat
+
+    static func == (lhs: NotchChatReply, rhs: NotchChatReply) -> Bool {
+        lhs.message == rhs.message && lhs.streaming == rhs.streaming && lhs.textSize == rhs.textSize
+    }
     @ObservedObject private var l10n = L10n.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hovering = false
@@ -319,7 +327,7 @@ private struct NotchChatReply: View {
                     if streaming && last {
                         typingText(prose)
                     } else {
-                        Text(Self.markdown(prose))
+                        NotchChatProse(text: prose).equatable()
                     }
                 case .code(let language, let code):
                     codeCard(language: language, code: code)
@@ -370,7 +378,7 @@ private struct NotchChatReply: View {
             .buttonStyle(.plain)
             .accessibilityValue(showsThinking ? Text(reasoning) : Text(""))
             if showsThinking {
-                Text(Self.markdown(reasoning))
+                NotchChatProse(text: reasoning).equatable()
                     .font(.system(size: textSize - 1.5))
                     .foregroundStyle(.white.opacity(0.55))
                     .lineSpacing(1.5)
@@ -413,9 +421,11 @@ private struct NotchChatReply: View {
         }
     }
 
+    /// Searched from the end: the thinking can run long, and this is asked on every frame.
     private static func lastLine(_ text: String) -> String? {
-        text.split(whereSeparator: \.isNewline).last.map { String($0).trimmingCharacters(in: .whitespaces) }
-            .flatMap { $0.isEmpty ? nil : $0 }
+        let start = text.lastIndex(where: \.isNewline).map(text.index(after:)) ?? text.startIndex
+        let line = text[start...].trimmingCharacters(in: .whitespaces)
+        return line.isEmpty ? nil : line
     }
 
     // MARK: Typing
@@ -499,12 +509,21 @@ private struct NotchChatReply: View {
     }
 }
 
+/// Prose as inline Markdown, parsed again only when its text changes, not on
+/// every frame of the reply around it.
+private struct NotchChatProse: View, Equatable {
+    let text: String
+
+    var body: some View { Text(NotchChatReply.markdown(text)) }
+}
+
 /// Three dots in a wave while the reply has not started; still ones under Reduce Motion.
 private struct NotchChatTypingDots: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        TimelineView(.animation(paused: reduceMotion)) { context in
+        // As often as the thinking title's light: the display's own rate would be up to 120 a second.
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { context in
             let time = context.date.timeIntervalSinceReferenceDate
             HStack(spacing: 3) {
                 ForEach(0..<3) { index in

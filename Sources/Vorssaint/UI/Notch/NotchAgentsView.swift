@@ -23,7 +23,9 @@ struct NotchAgentsView: View {
     @ObservedObject private var usage = AgentUsageService.shared
     @ObservedObject private var accounts = CodexProfileLimitsService.shared
     @ObservedObject private var approvals = AgentApprovalService.shared
-    @ObservedObject private var chat = NotchChatService.shared
+    /// Not observed: a reply typed out redraws the chat many times a second,
+    /// and only `pick` changes `isShown`, redrawing the page itself.
+    private var chat: NotchChatService { .shared }
     @ObservedObject private var l10n = L10n.shared
     @Environment(\.notchSettingsPreview) private var preview
     @Environment(\.accessibilityReduceMotion) private var reduceMotion

@@ -62,7 +62,8 @@ struct ChatMessage: Equatable, Identifiable {
     var text: String
     /// What the model thought before answering, when the server sends it apart from the text.
     var reasoning = ""
-    /// When it began thinking, and for how long it did once the answer began.
+    /// When it began thinking, and for how long it did once the answer began:
+    /// zero for a reply that did not think.
     var thinkingSince: Date?
     var thought: TimeInterval?
 }

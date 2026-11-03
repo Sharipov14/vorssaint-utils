@@ -36,7 +36,15 @@ final class NotchChatService: ObservableObject {
 
     var isBusy: Bool { phase == .waiting || phase == .streaming }
 
-    var providers: [ChatProvider] { NotchChatSupport.loadProviders(defaults) }
+    /// Decoded again only once Settings change them: the page asks on every
+    /// frame of a reply.
+    private var decoded: (json: String, providers: [ChatProvider]) = ("", [])
+
+    var providers: [ChatProvider] {
+        let json = defaults.string(forKey: DefaultsKey.notchChatProviders) ?? ""
+        if json != decoded.json { decoded = (json, NotchChatSupport.providers(from: json)) }
+        return decoded.providers
+    }
 
     /// The stored choice while its provider is on and still offers the
     /// model; otherwise the first model of the first provider that is on.
@@ -116,15 +124,26 @@ final class NotchChatService: ObservableObject {
                 feed.done = true
             }
             var shown = 0
+            var total = 0
+            var size = (text: 0, reasoning: 0)
             await withTaskCancellationHandler {
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(Self.frame))
                     guard let self, self.turn == current, !Task.isCancelled else { break }
+                    // Nothing new and nothing left to type: the frame costs nothing.
+                    let arrived = (text: feed.text.utf8.count, reasoning: feed.reasoning.utf8.count)
+                    if arrived != size {
+                        size = arrived
+                        total = feed.text.count
+                    } else if shown >= total {
+                        if feed.done { break }
+                        continue
+                    }
                     // Under Reduce Motion the words appear as they come.
                     shown = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-                        ? feed.text.count : NotchChatSupport.reveal(feed.text, shown: shown, frame: Self.frame)
+                        ? total : NotchChatSupport.reveal(feed.text, shown: shown, frame: Self.frame)
                     self.show(String(feed.text.prefix(shown)), reasoning: feed.reasoning)
-                    if feed.done, shown >= feed.text.count { break }
+                    if feed.done, shown >= total { break }
                 }
             } onCancel: {
                 reader.cancel()
@@ -149,10 +168,11 @@ final class NotchChatService: ObservableObject {
         var message = messages[last]
         message.text = reply
         message.reasoning = reasoning
-        let (thinking, answer) = NotchChatSupport.split(reply)
-        if message.thinkingSince == nil, !reasoning.isEmpty || !thinking.isEmpty { message.thinkingSince = Date() }
-        if let since = message.thinkingSince, message.thought == nil, !answer.isEmpty {
-            message.thought = Date().timeIntervalSince(since)
+        // Settled once the answer begins, so the reply is not split again on every frame after.
+        if message.thought == nil {
+            let (thinking, answer) = NotchChatSupport.split(reply)
+            if message.thinkingSince == nil, !reasoning.isEmpty || !thinking.isEmpty { message.thinkingSince = Date() }
+            if !answer.isEmpty { message.thought = message.thinkingSince.map { Date().timeIntervalSince($0) } ?? 0 }
         }
         if message != messages[last] { messages[last] = message }
     }
