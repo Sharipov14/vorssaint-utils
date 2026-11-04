@@ -42,6 +42,10 @@ enum SmoothScrollRoutingTests {
     enum Capture {
         static func steppedLoupeNeedsRawWheel(optionPressed: Bool) -> Bool { false }
     }
+    enum Ruler {
+        static var underPointer = false
+        static func wheelIsOverRuler() -> Bool { underPointer }
+    }
     /// Whether the event came in at the HID stage; false stands for a remote
     /// screen's scroll, posted further down.
     final class HIDStage {
@@ -57,6 +61,7 @@ enum SmoothScrollRoutingTests {
         typealias ScrollWheelTarget = Target
         typealias SessionActivity = Session
         typealias ScreenshotSelectionController = Capture
+        typealias NotchTimerRulerControl = Ruler
         typealias ScrollWheelHIDStage = HIDStage
         // Test events carry the harness pid; the real service rejects its own.
         static let ownProcessID: Int64 = -1
@@ -119,6 +124,16 @@ enum SmoothScrollRoutingTests {
         }
         func frame(_ service: Service, at time: TimeInterval = 1) {
             service.emitFrame(at: time, firstElapsed: SmoothScrollSupport.frameInterval)
+        }
+        do {
+            let service = Service()
+            _ = tick(service, wheel())
+            let gliding = service.engine.isActive
+            Ruler.underPointer = true
+            defer { Ruler.underPointer = false }
+            let raw = wheel()
+            suite.expect(gliding && tick(service, raw) === raw && !service.engine.isActive,
+                   "over the timer ruler the wheel stays raw and any glide already running stops")
         }
         let original = wheel()
         suite.expect(NSEvent(cgEvent: original)?.windowNumber == 101,

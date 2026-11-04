@@ -8,30 +8,86 @@ import Foundation
 enum NotchTimerMode: String, CaseIterable { case timer, pomodoro, stopwatch }
 enum NotchTimerPhase: String { case timer, focus, shortBreak, longBreak, stopwatch }
 
+/// The ruler reads in seconds. A step under a minute draws each of its marks,
+/// with the minutes taller; a longer step keeps a tick for every minute, with
+/// its own marks taller. The ticks stand the same distance apart at any step.
 enum NotchTimerRulerScale {
     static let spacing = 14.0
+    static let limit = Int(NotchTimerSupport.timerLimit)
+    /// In seconds. Each divides the limit, so the last mark is the limit.
+    static let steps = [10, 15, 30, 60, 300, 600, 900]
+    /// A wheel notch closer than this to the one before is part of a flick.
+    static let flickInterval = 0.07
+    static let mostFlickNotches = 5
 
-    static func moving(_ value: Double, by points: Double) -> Double {
-        guard value.isFinite, points.isFinite else { return 1 }
-        return min(180, max(1, value - points / spacing))
+    static func sanitizedStep(_ value: Int) -> Int { steps.contains(value) ? value : 60 }
+
+    /// Seconds between two ticks, and where the ruler starts: the first mark
+    /// of a step under a minute, otherwise the first minute at any step.
+    static func tick(step: Int) -> Int { min(60, sanitizedStep(step)) }
+
+    static func pointsPerSecond(step: Int) -> Double { spacing / Double(tick(step: step)) }
+
+    static func moving(_ value: Double, by points: Double, step: Int) -> Double {
+        let first = Double(tick(step: step))
+        guard value.isFinite, points.isFinite else { return first }
+        return min(Double(limit), max(first, value - points / pointsPerSecond(step: step)))
     }
 
-    static func minute(_ value: Double) -> Int {
-        Int(moving(value, by: 0).rounded())
+    static func second(_ value: Double, step: Int) -> Int {
+        Int(moving(value, by: 0, step: step).rounded())
     }
 
-    static func offset(of minute: Int, selected: Int) -> Double {
-        (Double(minute) - Double(selected)) * spacing
+    static func offset(of second: Int, position: Double, step: Int) -> Double {
+        (Double(second) - position) * pointsPerSecond(step: step)
+    }
+
+    /// The mark nearest `value`.
+    static func snapped(_ value: Double, step: Int) -> Int {
+        let mark = Double(sanitizedStep(step))
+        return second((moving(value, by: 0, step: step) / mark).rounded() * mark, step: step)
+    }
+
+    /// `notches` marks along from `value`. A value between marks counts its
+    /// nearest mark that way as the first, so 17 minutes at a step of 5 goes to
+    /// 20 or 15.
+    static func stepped(from value: Double, notches: Int, step: Int) -> Int {
+        let mark = Double(sanitizedStep(step))
+        let marks = moving(value, by: 0, step: step) / mark
+        let base = notches > 0 ? marks.rounded(.down) : marks.rounded(.up)
+        return second((base + Double(notches)) * mark, step: step)
+    }
+
+    /// Minutes stand tall over the seconds between them; a longer step's marks
+    /// stand tall over the minutes they pass, and so does the first minute.
+    static func isLong(_ second: Int, step: Int) -> Bool {
+        second == 60 || second.isMultiple(of: max(60, sanitizedStep(step)))
+    }
+
+    /// Only minutes are named, as many as have room: at 30 seconds a minute is
+    /// narrower than "1h00", so names keep to every fifth.
+    static func hasLabel(_ second: Int, step: Int) -> Bool {
+        let step = sanitizedStep(step)
+        guard second.isMultiple(of: 60) else { return false }
+        return second == 60 || (second / 60).isMultiple(of: step < 30 ? 1 : max(5, step / 60))
+    }
+
+    /// How many notches one notch counts for, from the time since the last
+    /// one. A long step already crosses the ruler quickly and is not multiplied.
+    static func flickNotches(interval: Double?, step: Int) -> Int {
+        guard let interval, interval.isFinite, interval > 0 else { return 1 }
+        let most = sanitizedStep(step) > 60 ? 1 : mostFlickNotches
+        return min(most, max(1, Int(min(1000, flickInterval / interval).rounded())))
     }
 
     /// Keep the ruler filled near either end instead of centering a short
     /// duration over an empty half. The inset fits the hour labels as well.
-    static func selectionX(selected: Int, width: Double) -> Double {
+    static func selectionX(position: Double, width: Double, step: Int) -> Double {
         guard width.isFinite, width > 0 else { return 0 }
         let inset = min(24, width / 2)
-        let selected = min(180, max(1, selected))
-        let leading = Double(selected - 1) * spacing
-        let trailing = Double(180 - selected) * spacing
+        let selected = moving(position, by: 0, step: step)
+        let leading = (selected - Double(tick(step: step))) * pointsPerSecond(step: step)
+        let trailing = (Double(limit) - selected) * pointsPerSecond(step: step)
         if leading + trailing <= width - 2 * inset {
             return (width - leading - trailing) / 2 + leading
         }
@@ -40,6 +96,88 @@ enum NotchTimerRulerScale {
 
     static func label(for minute: Int) -> String {
         minute >= 60 ? NotchTimerSupport.hoursText(hours: minute / 60, minutes: minute % 60) : String(minute)
+    }
+}
+
+/// Where the ruler is drawn, in seconds, between the marks it can rest on. The
+/// glide that moves the wheel's scrolling also moves this: time-based, it lands
+/// on the target exactly at any frame rate, and a far target is the ruler's
+/// inertia, since the speed falls away as it nears. It runs in points, so a
+/// glide over the same stretch of ruler feels the same at any step.
+struct NotchTimerRulerMotion {
+    struct Feel: Equatable {
+        let response: Int
+        let coast: Int
+        static let wheel = Feel(response: 70, coast: 65)
+        static let thrown = Feel(response: 0, coast: 100)
+    }
+
+    /// A throw travels the release speed times this, the glide's time constant
+    /// at `Feel.thrown`, so its first frame continues at the release speed.
+    static let throwSeconds = 0.16
+
+    let step: Int
+    private(set) var position: Double
+    private(set) var target: Double
+    private var feel = Feel.wheel
+    private var engine = SmoothScrollSupport.Engine()
+
+    init(position: Double = 60, step: Int = 60) {
+        self.step = step
+        self.position = NotchTimerRulerScale.moving(position, by: 0, step: step)
+        target = self.position
+    }
+
+    var isMoving: Bool { engine.isActive }
+
+    /// Puts the ruler at `value` now, ending any glide.
+    mutating func place(at value: Double) {
+        self = Self(position: value, step: step)
+    }
+
+    /// Glides from where the ruler is drawn. A new target replaces the old
+    /// one, so turning back answers at once and each notch starts sharp.
+    mutating func glide(to value: Double, feel: Feel = .wheel) {
+        target = NotchTimerRulerScale.moving(value, by: 0, step: step)
+        self.feel = feel
+        engine.reset()
+        engine.add(vertical: (target - position) * NotchTimerRulerScale.pointsPerSecond(step: step), horizontal: 0)
+    }
+
+    mutating func advance(elapsed: TimeInterval) {
+        _ = engine.advance(elapsed: elapsed, response: feel.response, coast: feel.coast)
+        position = target - engine.remainingVertical / NotchTimerRulerScale.pointsPerSecond(step: step)
+    }
+
+    /// The mark a release at `velocity`, in seconds of the ruler per second,
+    /// comes to rest on.
+    func thrownMark(velocity: Double) -> Int {
+        NotchTimerRulerScale.snapped(position + (velocity.isFinite ? velocity : 0) * Self.throwSeconds, step: step)
+    }
+}
+
+/// Turns a discrete wheel's events into marks to move: a fast notch weighs as
+/// much as a slow one, however macOS scaled it, and a run of quick notches
+/// counts for more. Fractions from a high-resolution wheel wait for a whole
+/// notch and are dropped on a reversal.
+struct NotchTimerRulerWheel {
+    private var carry = 0.0
+    private var direction = 0.0
+    private var lastNotch: TimeInterval?
+
+    /// `ticks` is positive when content moves toward earlier minutes, as a
+    /// scroll delta is. The result is positive toward later minutes.
+    mutating func marks(ticks: Double, timestamp: TimeInterval, step: Int) -> Int {
+        guard ticks.isFinite, ticks != 0, timestamp.isFinite else { return 0 }
+        if direction * ticks < 0 { carry = 0; lastNotch = nil }
+        direction = ticks
+        carry += ticks
+        let whole = carry.rounded(.towardZero)
+        guard whole != 0 else { return 0 }
+        carry -= whole
+        let weight = NotchTimerRulerScale.flickNotches(interval: lastNotch.map { timestamp - $0 }, step: step)
+        lastNotch = timestamp
+        return -Int(max(-1000, min(1000, whole))) * weight
     }
 }
 
@@ -123,7 +261,7 @@ struct NotchTimerSession: Equatable {
         return pausedReading ?? (completed || countsUp ? 0 : duration)
     }
 
-    mutating func start(mode: NotchTimerMode, minutes: Int, now: TimeInterval,
+    mutating func start(mode: NotchTimerMode, seconds: Int, now: TimeInterval,
                         configuration: NotchPomodoroConfiguration = NotchPomodoroConfiguration()) {
         guard !hasSession, now.isFinite else { return }
         self.mode = mode
@@ -132,7 +270,7 @@ struct NotchTimerSession: Equatable {
         switch mode {
         case .timer:
             phase = .timer
-            duration = Double(NotchTimerSupport.timerMinutes(minutes)) * 60
+            duration = Double(NotchTimerSupport.timerSeconds(seconds))
             anchor = now + duration
         case .pomodoro:
             phase = .focus
@@ -250,6 +388,19 @@ enum NotchTimerSupport {
     static let stopwatchLimit: TimeInterval = 100 * 3600 - 1
 
     static func timerMinutes(_ value: Int) -> Int { min(180, max(1, value)) }
+    static func timerSeconds(_ value: Int) -> Int { min(NotchTimerRulerScale.limit, max(NotchTimerRulerScale.steps[0], value)) }
+
+    /// The duration the setup page reads. A Mac or a backup from before the
+    /// ruler had seconds holds whole minutes only. Under a step that cannot
+    /// reach it, a shorter duration reads as the ruler's first mark.
+    static func timerSeconds(saved: Int?, minutes: Int, step: Int) -> Int {
+        max(NotchTimerRulerScale.tick(step: step), saved.map(timerSeconds) ?? timerMinutes(minutes) * 60)
+    }
+
+    /// A ruler's reading for VoiceOver, with every unit it has.
+    static func spokenText(seconds: Int, locale: Locale) -> String {
+        Duration.seconds(seconds).formatted(.units(allowed: [.hours, .minutes, .seconds], width: .wide).locale(locale))
+    }
 
     static func savedMode(in defaults: UserDefaults = .standard) -> NotchTimerMode {
         NotchTimerMode(rawValue: defaults.string(forKey: DefaultsKey.notchTimerMode) ?? "") ?? .timer

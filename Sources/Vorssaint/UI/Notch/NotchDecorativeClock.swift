@@ -15,11 +15,15 @@ final class NotchDecorativeClock {
     /// down to it steps a little less often.
     static let rate: Float = 30
 
+    private let frameRate: Float
     private let step: (CFTimeInterval) -> Void
     private var link: CADisplayLink?
 
-    /// `step` receives the time the frame being prepared will show at.
-    init(step: @escaping (CFTimeInterval) -> Void) {
+    /// `step` receives the time the frame being prepared will show at. Only
+    /// motion the pointer drives, for as long as it lasts, asks for a higher
+    /// rate than a decoration's.
+    init(rate: Float = NotchDecorativeClock.rate, step: @escaping (CFTimeInterval) -> Void) {
+        frameRate = rate
         self.step = step
     }
 
@@ -33,8 +37,8 @@ final class NotchDecorativeClock {
     func start(in view: NSView) {
         guard link == nil else { return }
         let link = view.displayLink(target: Target(clock: self), selector: #selector(Target.fire(_:)))
-        link.preferredFrameRateRange = CAFrameRateRange(minimum: Self.rate / 2, maximum: Self.rate,
-                                                        preferred: Self.rate)
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: frameRate / 2, maximum: frameRate,
+                                                        preferred: frameRate)
         link.add(to: .main, forMode: .common)
         self.link = link
     }

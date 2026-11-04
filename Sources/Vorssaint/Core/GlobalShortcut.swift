@@ -1123,6 +1123,12 @@ extension GlobalShortcut {
                                          role: role)
     }
 
+    /// For a caller that already holds a read of the live table.
+    func conflictsWithSystemShortcut(liveEntries: [LiveSystemShortcut]?) -> Bool {
+        Self.conflictsWithSystemShortcut(self, liveEntries: liveEntries,
+                                         symbolicHotKeys: Self.systemSymbolicHotKeys)
+    }
+
     /// The decision behind `conflictsWithSystemShortcut`, with both sources
     /// injected so it can be tested without touching the WindowServer. The
     /// plist is read only when the live table is missing or empty.

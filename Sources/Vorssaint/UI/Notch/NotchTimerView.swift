@@ -13,7 +13,10 @@ struct NotchTimerView: View {
     @AppStorage(DefaultsKey.notchPomodoroLongBreakMinutes) private var longBreakMinutes = 15
     @AppStorage(DefaultsKey.notchPomodoroLongBreakInterval) private var longBreakInterval = 4
     @AppStorage(DefaultsKey.notchPomodoroTotalSessions) private var totalSessions = 4
+    @AppStorage(DefaultsKey.notchTimerSeconds) private var savedSeconds: Int?
     @AppStorage(DefaultsKey.notchTimerMinutes) private var savedMinutes = 15
+    @AppStorage(DefaultsKey.notchTimerRulerStepSeconds) private var rulerStep = 60
+    @StateObject private var rulerReading = NotchTimerRulerReading()
     @Namespace private var modeSelection
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.notchBand) private var band
@@ -61,15 +64,16 @@ struct NotchTimerView: View {
             HStack(spacing: 12) {
                 switch mode {
                 case .timer:
-                    NotchTimerRuler(minutes: timerMinutes, label: text.timer, locale: locale)
+                    NotchTimerRuler(seconds: timerSeconds, step: rulerStep, reading: rulerReading, label: text.timer, locale: locale)
                         .frame(height: rulerHeight)
                 case .pomodoro:
-                    NotchTimerRuler(minutes: binding(.focus), label: text.focus, locale: locale)
+                    // A focus session is whole minutes, whatever the step.
+                    NotchTimerRuler(seconds: focusSeconds, step: max(60, rulerStep), reading: rulerReading, label: text.focus, locale: locale)
                         .frame(height: rulerHeight)
                 case .stopwatch:
                     Spacer(minLength: 0)
                 }
-                clock(setupClock, size: 26)
+                NotchTimerRulerClock(reading: rulerReading, resting: setupClock, size: 26)
             }
             .frame(height: rulerHeight)
             if mode == .pomodoro {
@@ -81,7 +85,11 @@ struct NotchTimerView: View {
 
     /// A small capsule in the top row, in the ruler's orange.
     private var startButton: some View {
-        Button { service.start(mode: mode, minutes: timerMinutes.wrappedValue) } label: {
+        Button {
+            // A ruler still gliding starts what the clock shows right now.
+            let reading = rulerReading.commitNow()
+            service.start(mode: mode, seconds: reading ?? timerSeconds.wrappedValue)
+        } label: {
             Text(text.start)
                 .font(.system(size: NotchTimerSupport.StartButton.labelSize, weight: .semibold))
                 .lineLimit(1)
@@ -134,8 +142,8 @@ struct NotchTimerView: View {
 
     private var setupClock: String {
         switch mode {
-        case .timer: return NotchTimerSupport.clockText(Double(timerMinutes.wrappedValue) * 60)
-        case .pomodoro: return NotchTimerSupport.clockText(Double(binding(.focus).wrappedValue) * 60)
+        case .timer: return NotchTimerSupport.clockText(Double(timerSeconds.wrappedValue))
+        case .pomodoro: return NotchTimerSupport.clockText(Double(focusSeconds.wrappedValue))
         case .stopwatch: return NotchTimerSupport.stopwatchText(0)
         }
     }
@@ -245,22 +253,22 @@ struct NotchTimerView: View {
 
     /// The breaks and the sessions as readouts in the ruler's own language:
     /// the name small and dim, the value in orange, the usual values behind
-    /// a native menu. They spread across a wide island and run sideways past
-    /// a narrow one.
+    /// a list. All four stay on the row: where they do not fit, the longest
+    /// name gives way, and the button's help reads it in full.
     private var pomodoroSettings: some View {
         let readouts = NotchPomodoroOption.allCases.filter { $0 != .focus }
-        return ViewThatFits(in: .horizontal) {
-            HStack(spacing: 0) {
-                ForEach(readouts) { readout($0).frame(maxWidth: .infinity, alignment: .leading) }
+        return HStack(spacing: 0) {
+            ForEach(readouts) { option in
+                readout(option)
+                    .layoutPriority(option == .longBreakInterval ? 0 : 1)
+                if option != readouts.last { Spacer(minLength: 0) }
             }
-            ScrollView(.horizontal) {
-                HStack(spacing: 14) {
-                    ForEach(readouts) { readout($0) }
-                }
-            }
-            .scrollIndicators(.hidden)
         }
+        // The names stay in line with the page, their hover areas past it.
+        .padding(.horizontal, -Self.readoutPadding)
     }
+
+    private static let readoutPadding: CGFloat = 7
 
     private func readout(_ option: NotchPomodoroOption) -> some View {
         let value = binding(option)
@@ -279,7 +287,7 @@ struct NotchTimerView: View {
                     Image(systemName: "chevron.down").font(.system(size: 7, weight: .semibold)).foregroundStyle(.secondary)
                 }
             }
-            .padding(.horizontal, 4)
+            .padding(.horizontal, Self.readoutPadding)
             .frame(height: NotchLayout.timerSettingsRowHeight)
             .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
@@ -287,9 +295,14 @@ struct NotchTimerView: View {
         .accessibilityValue(display(option, current))
     }
 
-    private var timerMinutes: Binding<Int> {
-        Binding(get: { NotchTimerSupport.timerMinutes(savedMinutes) },
-                set: { savedMinutes = NotchTimerSupport.timerMinutes($0) })
+    private var timerSeconds: Binding<Int> {
+        Binding(get: { NotchTimerSupport.timerSeconds(saved: savedSeconds, minutes: savedMinutes, step: rulerStep) },
+                set: { savedSeconds = NotchTimerSupport.timerSeconds($0) })
+    }
+
+    private var focusSeconds: Binding<Int> {
+        let focus = binding(.focus)
+        return Binding(get: { focus.wrappedValue * 60 }, set: { focus.wrappedValue = $0 / 60 })
     }
 
     private func binding(_ option: NotchPomodoroOption) -> Binding<Int> {
@@ -323,10 +336,7 @@ struct NotchTimerView: View {
     }
 
     private func clock(_ value: String, size: CGFloat) -> some View {
-        Text(value)
-            .font(.system(size: size, weight: .thin)).monospacedDigit()
-            .foregroundStyle(.orange)
-            .lineLimit(1).minimumScaleFactor(0.5)
+        NotchTimerClockText(value: value, size: size)
     }
 
     private func roundButton(symbol: String, title: String, action: @escaping () -> Void) -> some View {
@@ -341,5 +351,29 @@ struct NotchTimerView: View {
         .buttonStyle(NotchButtonStyle(cornerRadius: 26))
         .accessibilityLabel(title)
         .help(title)
+    }
+}
+
+private struct NotchTimerClockText: View {
+    let value: String
+    let size: CGFloat
+
+    var body: some View {
+        Text(value)
+            .font(.system(size: size, weight: .thin)).monospacedDigit()
+            .foregroundStyle(.orange)
+            .lineLimit(1).minimumScaleFactor(0.5)
+    }
+}
+
+/// The setup clock on its own, so a gliding ruler updates this text and
+/// nothing else on the page.
+private struct NotchTimerRulerClock: View {
+    @ObservedObject var reading: NotchTimerRulerReading
+    let resting: String
+    let size: CGFloat
+
+    var body: some View {
+        NotchTimerClockText(value: reading.seconds.map { NotchTimerSupport.clockText(Double($0)) } ?? resting, size: size)
     }
 }

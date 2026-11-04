@@ -345,7 +345,7 @@ enum NotchLayout {
     static let timerContentWidth: CGFloat = 344
     static let timerRowSpacing: CGFloat = 8
     /// The Pomodoro's breaks and sessions as one line of readouts under the ruler.
-    static let timerSettingsRowHeight: CGFloat = 28
+    static let timerSettingsRowHeight: CGFloat = 34
     static let timerRulerHeight: CGFloat = 82
     static let timerMinimumRulerHeight: CGFloat = 56
     /// Start sits in the island's top row with the modes.
@@ -1650,6 +1650,18 @@ enum NotchEvent: String, CaseIterable {
 }
 
 enum NotchSupport {
+    /// The row an arrow key moves a list to, past rows that cannot be chosen.
+    /// From no row it enters at the end it moves away from; at the last usable
+    /// row it stays. Nil when there is nowhere to go and nothing highlighted.
+    static func nextMenuRow(after current: Int?, by delta: Int, usable: [Bool]) -> Int? {
+        var row = (current ?? (delta > 0 ? -1 : usable.count)) + delta
+        while usable.indices.contains(row) {
+            if usable[row] { return row }
+            row += delta
+        }
+        return current
+    }
+
     /// Whether a connected display has a camera housing, wherever the island
     /// is: it can be off, withdrawn with the lid closed or on another display.
     static var hasNotchedDisplay: Bool {

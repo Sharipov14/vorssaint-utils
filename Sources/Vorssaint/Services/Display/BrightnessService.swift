@@ -474,6 +474,12 @@ final class BrightnessService: ObservableObject {
         return level
     }
 
+    private var systemShortcuts = RecentSystemShortcuts()
+
+    private func conflictsWithSystemShortcut(_ shortcut: GlobalShortcut) -> Bool {
+        shortcut.conflictsWithSystemShortcut(liveEntries: systemShortcuts.entries(now: ProcessInfo.processInfo.systemUptime))
+    }
+
     func syncWithPreferences() {
         let wanted = AppFeature.brightness.isAvailable
             && UserDefaults.standard.bool(forKey: DefaultsKey.brightnessControlEnabled)
@@ -488,9 +494,9 @@ final class BrightnessService: ObservableObject {
             && UserDefaults.standard.bool(forKey: DefaultsKey.displayBrightnessShortcutsEnabled)
         let decrease = GlobalShortcutRole.displayBrightnessDecrease.savedShortcut
         let increase = GlobalShortcutRole.displayBrightnessIncrease.savedShortcut
-        let decreaseConflicts = enabled && decrease.conflictsWithSystemShortcut
+        let decreaseConflicts = enabled && conflictsWithSystemShortcut(decrease)
             && !SystemShortcutTakeover.isTakenOver(GlobalShortcutRole.displayBrightnessDecrease.storageKey)
-        let increaseConflicts = enabled && increase.conflictsWithSystemShortcut
+        let increaseConflicts = enabled && conflictsWithSystemShortcut(increase)
             && !SystemShortcutTakeover.isTakenOver(GlobalShortcutRole.displayBrightnessIncrease.storageKey)
         let decreaseRegistered = displayBrightnessDecreaseHotkey.sync(
             enabled: enabled && !decreaseConflicts, shortcut: decrease,
@@ -530,9 +536,9 @@ final class BrightnessService: ObservableObject {
             && keyboardLightBridge != nil
         let decreaseShortcut = GlobalShortcutRole.keyboardBrightnessDecrease.savedShortcut
         let increaseShortcut = GlobalShortcutRole.keyboardBrightnessIncrease.savedShortcut
-        let decreaseConflicts = enabled && decreaseShortcut.conflictsWithSystemShortcut
+        let decreaseConflicts = enabled && conflictsWithSystemShortcut(decreaseShortcut)
             && !SystemShortcutTakeover.isTakenOver(GlobalShortcutRole.keyboardBrightnessDecrease.storageKey)
-        let increaseConflicts = enabled && increaseShortcut.conflictsWithSystemShortcut
+        let increaseConflicts = enabled && conflictsWithSystemShortcut(increaseShortcut)
             && !SystemShortcutTakeover.isTakenOver(GlobalShortcutRole.keyboardBrightnessIncrease.storageKey)
         let decreaseRegistered = keyboardBrightnessDecreaseHotkey.sync(
             enabled: enabled && !decreaseConflicts, shortcut: decreaseShortcut,

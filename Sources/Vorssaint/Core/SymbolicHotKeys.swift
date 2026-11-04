@@ -27,6 +27,24 @@ struct LiveSystemShortcut: Equatable {
     }
 }
 
+/// The live table for a caller that runs after every preference write. Each
+/// full read waits on hundreds of WindowServer round trips on the main thread,
+/// and a change in System Settings reaches such a caller only on its next run
+/// anyway, so a burst of writes shares one read.
+struct RecentSystemShortcuts {
+    static let maximumAge: TimeInterval = 2
+    private var entries: [LiveSystemShortcut]?
+    private var readAt: TimeInterval?
+
+    mutating func entries(now: TimeInterval,
+                          read: () -> [LiveSystemShortcut]? = SymbolicHotKeys.liveEntries) -> [LiveSystemShortcut]? {
+        if let readAt, now >= readAt, now - readAt < Self.maximumAge { return entries }
+        entries = read()
+        readAt = now
+        return entries
+    }
+}
+
 /// The WindowServer's own shortcut table, reached through the same private
 /// SkyLight calls the App Switcher's take-over uses. Every symbol is resolved
 /// at runtime and every reader tolerates its absence, so a macOS that drops

@@ -16,6 +16,7 @@ struct NotchSettings: View {
     @AppStorage(DefaultsKey.notchDismissNativeNotifications) private var dismissNativeNotifications = false
     @AppStorage(DefaultsKey.notchTimerEnabled) private var timerEnabled = true
     @AppStorage(DefaultsKey.notchTimerSoundEnabled) private var timerSoundEnabled = true
+    @AppStorage(DefaultsKey.notchTimerRulerStepSeconds) private var timerRulerStep = 60
     @AppStorage(DefaultsKey.notchHideTimerCountdown) private var hideTimerCountdown = false
     @AppStorage(DefaultsKey.notchCameraEnabled) private var cameraEnabled = true
     @AppStorage(DefaultsKey.notchAccessoriesEnabled) private var accessoriesEnabled = true
@@ -122,7 +123,7 @@ struct NotchSettings: View {
          String(notificationsEnabled), String(dismissNativeNotifications), String(gesturesEnabled),
          String(lyricsEnabled), String(lyricsOnline), String(queueEnabled), String(liveEqualizer),
          String(showPlayingMusic), String(includeOtherPlayers), String(musicShowVolume), idle, hiddenControls, controlOrder, size,
-         String(timerEnabled), String(timerSoundEnabled), String(hideTimerCountdown),
+         String(timerEnabled), String(timerSoundEnabled), String(timerRulerStep), String(hideTimerCountdown),
          String(cameraEnabled), String(accessoriesEnabled), String(outlineEnabled), String(hideMenuBarGap),
          String(customWidth), String(customHeight), String(cameraFitWidth), String(cameraFitHeight),
          String(capsuleFitWidth), String(capsuleFitHeight), String(capsuleFitDrop), String(hapticFeedback),
@@ -498,6 +499,17 @@ struct NotchSettings: View {
                 .disabled(!AppFeature.notchTimer.isAvailable)
             switchRow("speaker.wave.2", activities.soundEnabled, isOn: $timerSoundEnabled)
                 .disabled(!AppFeature.notchTimer.isAvailable)
+            SettingsRow(symbol: "ruler", title: activities.rulerStep) {
+                Picker(activities.rulerStep, selection: Binding(
+                    get: { NotchTimerRulerScale.sanitizedStep(timerRulerStep) }, set: { timerRulerStep = $0 })) {
+                    ForEach(NotchTimerRulerScale.steps, id: \.self) { step in
+                        Text(NotchTimerSupport.compactText(Double(step), locale: Locale(identifier: l10n.language.rawValue)))
+                            .tag(step)
+                    }
+                }
+                .labelsHidden()
+            }
+            .disabled(!AppFeature.notchTimer.isAvailable)
         case .camera:
             Text(FeatureStrings.notchActivities(l10n.language).cameraHint).font(.callout).foregroundStyle(.secondary)
             if permissions.camera == .granted {
