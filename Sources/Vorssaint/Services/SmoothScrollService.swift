@@ -225,6 +225,12 @@ final class SmoothScrollService: ObservableObject {
             stopGlide()
             return Unmanaged.passUnretained(event)
         }
+        // The timer ruler counts notches and glides itself; a glide stream
+        // would hide the notches its step is made of.
+        if NotchTimerRulerControl.wheelIsOverRuler() {
+            stopGlide()
+            return Unmanaged.passUnretained(event)
+        }
         // Touch devices are already smooth; only mouse wheels glide. The
         // classification is shared with the scroll inverter, so mice that
         // report the wheel as continuous events (issue #267) are wheels too.

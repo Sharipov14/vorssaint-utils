@@ -14,6 +14,7 @@ enum NotchActivityTests {
         stopwatchContracts(suite)
         modePickerContracts(suite)
         rulerContracts(suite)
+        rulerMotionContracts(suite)
         compactTimerContracts(suite)
         compactMarginContracts(suite)
         compactDownloadContracts(suite)
@@ -237,9 +238,9 @@ enum NotchActivityTests {
     private static func timerContracts(_ suite: TestSuite) {
         var session = NotchTimerSession()
         suite.expect(!session.hasSession, "an unused timer has no active session")
-        session.start(mode: .timer, minutes: 5, now: 100)
+        session.start(mode: .timer, seconds: 300, now: 100)
         suite.expect(session.reading(at: 101.25) == 298.75, "countdown uses an absolute deadline, including fractional elapsed time")
-        session.start(mode: .pomodoro, minutes: 25, now: 105)
+        session.start(mode: .pomodoro, seconds: 1500, now: 105)
         suite.expect(session.mode == .timer && session.deadline == 400, "starting twice cannot replace an active timer")
         session.pause(at: 160)
         suite.expect(session.isPaused && session.reading(at: 10_000) == 240, "paused time stays fixed across sleep")
@@ -250,19 +251,37 @@ enum NotchActivityTests {
         suite.expect(!session.finishIfDue(at: 100_001), "repeated callbacks cannot announce the same completion twice")
         session.cancel()
         suite.expect(!session.hasSession && session.completedFocuses == 0, "cancel discards the entire session")
-        session.start(mode: .timer, minutes: 0, now: 0)
-        suite.expect(session.duration == 60, "timer input cannot create an immediately expired session")
-        session.pause(at: 60)
+        session.start(mode: .timer, seconds: 0, now: 0)
+        suite.expect(session.duration == 10, "timer input cannot create an immediately expired session")
+        session.pause(at: 10)
         suite.expect(session.completed && !session.isPaused, "pausing at the deadline completes instead of preserving a zero timer")
         session.cancel()
-        session.start(mode: .timer, minutes: Int.max, now: 0)
+        session.start(mode: .timer, seconds: Int.max, now: 0)
         suite.expect(session.duration == 10_800, "corrupt duration input stays within three hours")
         suite.expect(NotchTimerSupport.timerMinutes(60) == 60 && NotchTimerSupport.timerMinutes(Int.max) == 180
                && NotchTimerSupport.timerMinutes(Int.min) == 1,
                "a remembered duration restored from a backup stays between a minute and three hours")
         suite.expect(Defaults.registeredDefaults[DefaultsKey.notchTimerMinutes] as? Int == 15
-               && SettingsBackupSupport.exportKeys().contains(DefaultsKey.notchTimerMinutes),
+               && SettingsBackupSupport.exportKeys().contains(DefaultsKey.notchTimerMinutes)
+               && SettingsBackupSupport.exportKeys().contains(DefaultsKey.notchTimerSeconds),
                "the timer's duration is registered and travels with settings backups")
+        suite.expect(NotchTimerSupport.timerSeconds(saved: nil, minutes: 25, step: 60) == 1500
+               && NotchTimerSupport.timerSeconds(saved: nil, minutes: Int.max, step: 10) == 10_800
+               && Defaults.registeredDefaults[DefaultsKey.notchTimerSeconds] == nil,
+               "a duration remembered in whole minutes still reads after the update")
+        suite.expect(SettingsBackupSupport.keysToClear(whenImporting: [DefaultsKey.notchTimerMinutes: 25])
+                    .contains(DefaultsKey.notchTimerSeconds),
+               "a backup from before seconds brings its minutes back instead of being shadowed by the seconds here")
+        suite.expect(NotchTimerSupport.timerSeconds(saved: 90, minutes: 25, step: 30) == 90
+               && NotchTimerSupport.timerSeconds(saved: 90, minutes: 25, step: 300) == 90
+               && NotchTimerSupport.timerSeconds(saved: 10, minutes: 25, step: 10) == 10
+               && NotchTimerSupport.timerSeconds(saved: Int.max, minutes: 25, step: 10) == 10_800
+               && NotchTimerSupport.timerSeconds(saved: Int.min, minutes: 25, step: 10) == 10,
+               "a remembered duration keeps its seconds and stays between the shortest mark and three hours")
+        suite.expect(NotchTimerSupport.timerSeconds(saved: 10, minutes: 25, step: 60) == 60,
+               "a duration a longer step cannot reach reads as the ruler's first mark, so the clock agrees with the pointer")
+        let spoken = NotchTimerSupport.spokenText(seconds: 90, locale: Locale(identifier: "en_US"))
+        suite.expect(spoken.contains("1") && spoken.contains("30"), "VoiceOver hears a ruler's seconds as well as its minutes: \(spoken)")
         suite.expect(NotchTimerSupport.clockText(0.01) == "00:01" && NotchTimerSupport.clockText(-1) == "00:00"
                && NotchTimerSupport.clockText(.nan) == "00:00", "display rounds up and safely handles invalid remaining time")
         let clockCases: [(TimeInterval, String)] = [
@@ -333,7 +352,7 @@ enum NotchActivityTests {
             }
         }
         session.cancel()
-        session.start(mode: .pomodoro, minutes: 5, now: 0, configuration: NotchPomodoroConfiguration(totalSessions: 5))
+        session.start(mode: .pomodoro, seconds: 300, now: 0, configuration: NotchPomodoroConfiguration(totalSessions: 5))
         var now: TimeInterval = 0
         for round in 1...4 {
             suite.expect(session.phase == .focus && session.duration == 1500, "each focus phase lasts 25 minutes")
@@ -362,7 +381,7 @@ enum NotchActivityTests {
         let config = NotchPomodoroConfiguration(focusMinutes: 10, shortBreakMinutes: 2,
                                               longBreakMinutes: 7, longBreakInterval: 2, totalSessions: 3)
         var session = NotchTimerSession()
-        session.start(mode: .pomodoro, minutes: 1, now: 0, configuration: config)
+        session.start(mode: .pomodoro, seconds: 60, now: 0, configuration: config)
         suite.expect(session.duration == 600 && session.sessionNumber == 1 && !session.canStartNext,
                "custom focus duration starts the first session and cannot be skipped while active")
         session.pause(at: 100)
@@ -395,7 +414,7 @@ enum NotchActivityTests {
         session.startNext(at: now + 1)
         suite.expect(session == finished, "continuation cannot restart a finished cycle")
         session.cancel()
-        session.start(mode: .pomodoro, minutes: 1, now: 0,
+        session.start(mode: .pomodoro, seconds: 60, now: 0,
                       configuration: NotchPomodoroConfiguration(longBreakInterval: 1, totalSessions: 1))
         _ = session.finishIfDue(at: 100_000)
         suite.expect(session.cycleFinished && session.completedFocuses == 1 && !session.canStartNext,
@@ -424,7 +443,7 @@ enum NotchActivityTests {
         suite.expect(saved == NotchPomodoroConfiguration(focusMinutes: 45, shortBreakMinutes: 8,
             longBreakMinutes: 20, longBreakInterval: 3, totalSessions: 6), "saved choices restore the whole cycle")
         session.cancel()
-        session.start(mode: .pomodoro, minutes: 1, now: 0, configuration: saved)
+        session.start(mode: .pomodoro, seconds: 60, now: 0, configuration: saved)
         defaults.set(1, forKey: DefaultsKey.notchPomodoroFocusMinutes)
         suite.expect(session.configuration == saved && session.duration == 2_700,
                "changes to saved preferences never rewrite an already running cycle")
@@ -441,7 +460,7 @@ enum NotchActivityTests {
     private static func stopwatchContracts(_ suite: TestSuite) {
         var session = NotchTimerSession()
         suite.expect(session.reading(at: 5) == 300 && !session.countsUp, "an idle page still previews the countdown it would start")
-        session.start(mode: .stopwatch, minutes: 15, now: 100)
+        session.start(mode: .stopwatch, seconds: 900, now: 100)
         suite.expect(session.countsUp && session.phase == .stopwatch && session.isRunning && session.deadline == nil
                && session.duration == 0, "a stopwatch runs from zero with no deadline or preset duration")
         suite.expect(session.reading(at: 100) == 0 && session.reading(at: 161.25) == 61.25,
@@ -449,7 +468,7 @@ enum NotchActivityTests {
         suite.expect(session.reading(at: 99) == 0, "a clock that reads before its anchor never shows negative time")
         suite.expect(!session.finishIfDue(at: 1_000_000) && session.isRunning && !session.completed,
                "a stopwatch never completes on its own, however long it runs")
-        session.start(mode: .timer, minutes: 5, now: 200)
+        session.start(mode: .timer, seconds: 300, now: 200)
         suite.expect(session.countsUp && session.anchor == 100, "starting twice cannot replace a running stopwatch")
         session.pause(at: 160)
         suite.expect(session.isPaused && !session.isRunning && session.reading(at: 10_000) == 60,
@@ -468,13 +487,13 @@ enum NotchActivityTests {
                "cancel discards the stopwatch and returns the page to its countdown preview")
 
         var countdown = NotchTimerSession()
-        countdown.start(mode: .timer, minutes: 1, now: 0)
+        countdown.start(mode: .timer, seconds: 60, now: 0)
         for (elapsed, expected) in [(0.0, 1.0), (0.25, 0.75), (0.999, 0.001)] {
             let offset = NotchTimerSupport.secondBoundaryOffset(for: countdown, at: elapsed)
             suite.expect(abs(offset - expected) < 1e-9, "countdown ticks align to whole remaining seconds: \(elapsed)")
         }
         var stopwatch = NotchTimerSession()
-        stopwatch.start(mode: .stopwatch, minutes: 1, now: 0)
+        stopwatch.start(mode: .stopwatch, seconds: 60, now: 0)
         for (elapsed, expected) in [(0.0, 1.0), (0.25, 0.75), (61.999, 0.001)] {
             let offset = NotchTimerSupport.secondBoundaryOffset(for: stopwatch, at: elapsed)
             suite.expect(abs(offset - expected) < 1e-9, "stopwatch ticks align to whole elapsed seconds: \(elapsed)")
@@ -535,7 +554,7 @@ enum NotchActivityTests {
                && NotchTimerSupport.compactText(for: countdown, at: 0.1, locale: locale) == "1m",
                "compact session readings keep each mode's own notation")
         var hours = NotchTimerSession()
-        hours.start(mode: .timer, minutes: 120, now: 0)
+        hours.start(mode: .timer, seconds: 7200, now: 0)
         suite.expect(NotchTimerSupport.compactText(for: hours, at: 1, locale: locale) == "1h59"
                && NotchTimerSupport.compactText(for: hours, at: 3600, locale: locale) == "1h00"
                && NotchTimerSupport.compactText(for: hours, at: 3601, locale: locale) == "59m",
@@ -674,62 +693,229 @@ enum NotchActivityTests {
     }
 
     private static func rulerContracts(_ suite: TestSuite) {
+        typealias Scale = NotchTimerRulerScale
         for (minute, expected) in [(1, "1"), (55, "55"), (60, "1h00"), (65, "1h05"),
                                    (140, "2h20"), (143, "2h23"), (180, "3h00")] {
-            suite.expect(NotchTimerRulerScale.label(for: minute) == expected,
+            suite.expect(Scale.label(for: minute) == expected,
                    "ruler labels write hours with an h, so an hour mark never reads like the minute clock")
         }
-        for minute in [1, 15, 90, 180] {
-            suite.expect(NotchTimerRulerScale.offset(of: minute, selected: minute) == 0,
-                   "the chosen minute stays under the pointer, including the initial value and both endpoints")
+        for step in Scale.steps {
+            let tick = Scale.tick(step: step)
+            for second in [tick, 900, 5400, Scale.limit] {
+                suite.expect(Scale.offset(of: second, position: Double(second), step: step) == 0,
+                       "the chosen duration stays under the pointer, including the initial value and both endpoints")
+            }
+            for width in [96.0, 180, 300, 560] {
+                var filled = true
+                var selectedVisible = true
+                var clicksMatch = true
+                // Every seventh mark: at ten seconds the ruler has over a thousand.
+                for selected in stride(from: tick, through: Scale.limit, by: tick * 7) {
+                    let position = Double(selected)
+                    let pointer = Scale.selectionX(position: position, width: width, step: step)
+                    let first = pointer + Scale.offset(of: tick, position: position, step: step)
+                    let last = pointer + Scale.offset(of: Scale.limit, position: position, step: step)
+                    filled = filled && first <= 24 && last >= width - 24
+                    selectedVisible = selectedVisible && pointer >= 24 && pointer <= width - 24
+                    let nearby = Int(width / Scale.spacing) + 1
+                    for second in stride(from: selected - nearby * tick, through: selected + nearby * tick, by: tick) {
+                        guard second >= tick, second <= Scale.limit else { continue }
+                        let x = pointer + Scale.offset(of: second, position: position, step: step)
+                        guard (0...width).contains(x) else { continue }
+                        let clicked = Scale.moving(position, by: -(x - pointer), step: step)
+                        clicksMatch = clicksMatch && Scale.second(clicked, step: step) == second
+                    }
+                }
+                suite.expect(filled, "the ruler fills its width near both limits at a step of \(step) and \(width) points")
+                suite.expect(selectedVisible, "every selected mark stays visible with room for its label at a step of \(step) and \(width) points")
+                suite.expect(clicksMatch, "visible ticks select their own duration at a step of \(step) and \(width) points")
+            }
+            var named = [Int]()
+            for second in stride(from: tick, through: Scale.limit, by: tick) where Scale.hasLabel(second, step: step) {
+                named.append(second)
+            }
+            let closest = zip(named, named.dropFirst()).map { Scale.offset(of: $1, position: Double($0), step: step) }.min() ?? 0
+            suite.expect(closest >= 50, "ruler labels never run into each other at a step of \(step): \(closest) points")
         }
-        for width in [96.0, 180, 300, 560] {
-            var filled = true
-            var selectedVisible = true
-            var clicksMatch = true
-            for selected in 1...180 {
-                let pointer = NotchTimerRulerScale.selectionX(selected: selected, width: width)
-                let first = pointer + NotchTimerRulerScale.offset(of: 1, selected: selected)
-                let last = pointer + NotchTimerRulerScale.offset(of: 180, selected: selected)
-                filled = filled && first <= 24 && last >= width - 24
-                selectedVisible = selectedVisible && pointer >= 24 && pointer <= width - 24
-                for minute in 1...180 {
-                    let x = pointer + NotchTimerRulerScale.offset(of: minute, selected: selected)
-                    guard (0...width).contains(x) else { continue }
-                    let clicked = NotchTimerRulerScale.moving(Double(selected), by: -(x - pointer))
-                    clicksMatch = clicksMatch && NotchTimerRulerScale.minute(clicked) == minute
+        suite.expect(Scale.selectionX(position: 300, width: 300, step: 60) == 80
+               && Scale.selectionX(position: 5400, width: 300, step: 60) == 150
+               && Scale.selectionX(position: 10800, width: 300, step: 60) == 276,
+               "short durations start near the leading edge, middle durations stay centered and the maximum reaches the trailing edge")
+        suite.expect(Scale.second(Scale.moving(900, by: 14, step: 60), step: 60) == 840
+               && Scale.second(Scale.moving(900, by: -14, step: 60), step: 60) == 960
+               && Scale.second(Scale.moving(60, by: -14, step: 10), step: 10) == 70
+               && Scale.second(Scale.moving(60, by: -14, step: 30), step: 30) == 90,
+               "dragging the ruler by one tick moves one tick in the matching direction, at any step")
+        var value = 900.0
+        for _ in 0..<3 { value = Scale.moving(value, by: 2, step: 60) }
+        suite.expect(Scale.snapped(value, step: 60) == 900, "small movements do not repeatedly change the selected tick")
+        value = Scale.moving(value, by: 2, step: 60)
+        suite.expect(Scale.snapped(value, step: 60) == 840, "fine scroll and drag deltas accumulate until crossing a tick")
+        value = Scale.moving(60, by: 10_000, step: 60)
+        suite.expect(value == 60 && Scale.moving(value, by: -14, step: 60) == 120,
+               "dragging beyond the minimum does not leave a dead zone when reversing")
+        value = Scale.moving(10_800, by: -10_000, step: 60)
+        suite.expect(value == 10_800 && Scale.moving(value, by: 14, step: 60) == 10_740,
+               "dragging beyond the maximum allows an immediate reversal")
+        suite.expect(Scale.second(.nan, step: 60) == 60 && Scale.second(.infinity, step: 60) == 60
+               && Scale.second(.greatestFiniteMagnitude, step: 60) == 10_800 && Scale.second(.nan, step: 10) == 10,
+               "invalid or excessive ruler values cannot escape the supported duration range")
+    }
+
+    private static func rulerMotionContracts(_ suite: TestSuite) {
+        typealias Scale = NotchTimerRulerScale
+        suite.expect(Scale.steps.allSatisfy { Scale.limit % $0 == 0 }
+               && Scale.sanitizedStep(0) == 60 && Scale.sanitizedStep(7) == 60 && Scale.sanitizedStep(900) == 900
+               && Scale.sanitizedStep(10) == 10,
+               "every ruler step ends on the limit, and a corrupt step from a backup falls back to one minute")
+        suite.expect(Defaults.registeredDefaults[DefaultsKey.notchTimerRulerStepSeconds] as? Int == 60
+               && SettingsBackupSupport.exportKeys().contains(DefaultsKey.notchTimerRulerStepSeconds),
+               "the ruler step defaults to a minute and travels with settings backups")
+        suite.expect(Scale.stepped(from: 1020, notches: 1, step: 300) == 1200 && Scale.stepped(from: 1020, notches: -1, step: 300) == 900
+               && Scale.stepped(from: 65, notches: 1, step: 10) == 70 && Scale.stepped(from: 65, notches: -1, step: 10) == 60,
+               "a value between marks moves to the nearest mark in the direction turned")
+        suite.expect(Scale.stepped(from: 60, notches: 1, step: 300) == 300 && Scale.stepped(from: 300, notches: -1, step: 300) == 60
+               && Scale.stepped(from: 60, notches: -1, step: 300) == 60 && Scale.stepped(from: 10_800, notches: 1, step: 900) == 10_800
+               && Scale.stepped(from: 900, notches: 1, step: 60) == 960 && Scale.stepped(from: 1404, notches: -1, step: 60) == 1380,
+               "stepping keeps the first minute reachable and stops at both limits")
+        suite.expect(Scale.stepped(from: 60, notches: 1, step: 10) == 70 && Scale.stepped(from: 10, notches: -1, step: 10) == 10
+               && Scale.stepped(from: 20, notches: -1, step: 10) == 10 && Scale.stepped(from: 90, notches: 1, step: 30) == 120
+               && Scale.stepped(from: 45, notches: 1, step: 15) == 60 && Scale.stepped(from: 10_800, notches: 1, step: 10) == 10_800,
+               "a step of seconds moves by those seconds, down to its first mark")
+        suite.expect(Scale.snapped(1020, step: 300) == 900 && Scale.snapped(1080, step: 300) == 1200 && Scale.snapped(120, step: 300) == 60
+               && Scale.snapped(.nan, step: 300) == 60 && Scale.snapped(.infinity, step: 300) == 60 && Scale.snapped(984, step: 60) == 960
+               && Scale.snapped(14, step: 10) == 10 && Scale.snapped(16, step: 10) == 20 && Scale.snapped(44, step: 15) == 45
+               && Scale.snapped(.nan, step: 10) == 10,
+               "the ruler rests on the mark nearest it, and invalid values stay in range")
+        suite.expect(Scale.isLong(60, step: 10) && Scale.isLong(120, step: 30) && !Scale.isLong(90, step: 30)
+               && !Scale.isLong(10, step: 10) && !Scale.isLong(75, step: 15) && Scale.isLong(420, step: 60),
+               "under a step of seconds the minutes stand tall and the seconds short")
+        suite.expect(Scale.isLong(60, step: 300) && Scale.isLong(600, step: 300) && !Scale.isLong(420, step: 300),
+               "a longer step's marks stand tall over the minutes they pass")
+        suite.expect(Scale.tick(step: 10) == 10 && Scale.tick(step: 30) == 30 && Scale.tick(step: 60) == 60 && Scale.tick(step: 900) == 60
+               && Scale.offset(of: 20, position: 10, step: 10) == Scale.spacing
+               && Scale.offset(of: 120, position: 60, step: 60) == Scale.spacing,
+               "ticks stand the same distance apart at any step")
+        suite.expect(Scale.hasLabel(60, step: 900) && Scale.hasLabel(1800, step: 900) && !Scale.hasLabel(300, step: 900)
+               && Scale.hasLabel(300, step: 60) && !Scale.hasLabel(420, step: 60)
+               && Scale.hasLabel(120, step: 10) && !Scale.hasLabel(130, step: 10) && !Scale.hasLabel(10, step: 10)
+               && Scale.hasLabel(300, step: 30) && !Scale.hasLabel(120, step: 30),
+               "only minutes are named, as many as the step leaves room for")
+        suite.expect(Scale.flickNotches(interval: nil, step: 60) == 1 && Scale.flickNotches(interval: 0.2, step: 60) == 1
+               && Scale.flickNotches(interval: 0.025, step: 60) == 3 && Scale.flickNotches(interval: 0.001, step: 60) == 5
+               && Scale.flickNotches(interval: -1, step: 60) == 1 && Scale.flickNotches(interval: 0.001, step: 300) == 1
+               && Scale.flickNotches(interval: 0.001, step: 10) == 5,
+               "only quick notches count for more, up to a limit, and a long step is not multiplied")
+        for step in [10, 60] {
+            for width in [96.0, 300, 560] {
+                let tick = Double(Scale.tick(step: step))
+                var position = tick
+                var largest = 0.0
+                var previous = Scale.selectionX(position: position, width: width, step: step)
+                while position < Double(Scale.limit) {
+                    position += tick / 100
+                    let next = Scale.selectionX(position: position, width: width, step: step)
+                    largest = max(largest, abs(next - previous))
+                    previous = next
+                }
+                suite.expect(largest < 0.15, "the pointer never jumps as a fractional position crosses the ruler at \(width) points")
+            }
+        }
+
+        func landing(from start: Double, to end: Double, hertz: Double, feel: NotchTimerRulerMotion.Feel = .wheel, step: Int = 60)
+            -> (exact: Bool, steady: Bool, seconds: Double) {
+            var motion = NotchTimerRulerMotion(position: start, step: step)
+            motion.glide(to: end, feel: feel)
+            var steady = true
+            var seconds = 0.0
+            var previous = start
+            while motion.isMoving, seconds < 10 {
+                motion.advance(elapsed: 1 / hertz)
+                seconds += 1 / hertz
+                steady = steady && (end >= start ? motion.position >= previous && motion.position <= end
+                                                 : motion.position <= previous && motion.position >= end)
+                previous = motion.position
+            }
+            return (motion.position == end && !motion.isMoving, steady, seconds)
+        }
+        for hertz in [30.0, 60, 120] {
+            for (start, end) in [(900.0, 960.0), (900.0, 5400.0), (7200.0, 2400.0), (60.0, 10_800.0)] {
+                for feel in [NotchTimerRulerMotion.Feel.wheel, .thrown] {
+                    let run = landing(from: start, to: end, hertz: hertz, feel: feel)
+                    suite.expect(run.exact && run.steady, "the ruler lands exactly on its mark without overshooting or backing up at \(hertz) Hz")
                 }
             }
-            suite.expect(filled, "the timer ruler fills its width near both limits without an empty half at \(width) points")
-            suite.expect(selectedVisible, "every selected minute stays visible with room for its label at \(width) points")
-            suite.expect(clicksMatch, "visible ruler ticks select their own minute even when the pointer leaves the center at \(width) points")
+            let fine = landing(from: 90, to: 300, hertz: hertz, step: 10)
+            suite.expect(fine.exact && fine.steady, "a step of seconds lands exactly on its mark at \(hertz) Hz")
         }
-        suite.expect(NotchTimerRulerScale.selectionX(selected: 5, width: 300) == 80
-               && NotchTimerRulerScale.selectionX(selected: 90, width: 300) == 150
-               && NotchTimerRulerScale.selectionX(selected: 180, width: 300) == 276,
-               "short durations start near the leading edge, middle durations stay centered and the maximum reaches the trailing edge")
-        suite.expect(NotchTimerRulerScale.minute(NotchTimerRulerScale.moving(15, by: 14)) == 14
-               && NotchTimerRulerScale.minute(NotchTimerRulerScale.moving(15, by: -14)) == 16,
-               "dragging the ruler by one tick changes one minute in the matching direction")
-        for minute in [1, 5, 15, 30, 180] {
-            let offset = NotchTimerRulerScale.offset(of: minute, selected: 15)
-            suite.expect(NotchTimerRulerScale.minute(NotchTimerRulerScale.moving(15, by: -offset)) == minute,
-                   "clicking a drawn tick selects its own minute, with the same spacing used by dragging")
-        }
-        var value = 15.0
-        for _ in 0..<3 { value = NotchTimerRulerScale.moving(value, by: 2) }
-        suite.expect(NotchTimerRulerScale.minute(value) == 15, "small movements do not repeatedly change the selected tick")
-        value = NotchTimerRulerScale.moving(value, by: 2)
-        suite.expect(NotchTimerRulerScale.minute(value) == 14, "fine scroll and drag deltas accumulate until crossing a tick")
-        value = NotchTimerRulerScale.moving(1, by: 10_000)
-        suite.expect(value == 1 && NotchTimerRulerScale.moving(value, by: -14) == 2,
-               "dragging beyond the minimum does not leave a dead zone when reversing")
-        value = NotchTimerRulerScale.moving(180, by: -10_000)
-        suite.expect(value == 180 && NotchTimerRulerScale.moving(value, by: 14) == 179,
-               "dragging beyond the maximum allows an immediate reversal")
-        suite.expect(NotchTimerRulerScale.minute(.nan) == 1 && NotchTimerRulerScale.minute(.infinity) == 1
-               && NotchTimerRulerScale.minute(.greatestFiniteMagnitude) == 180,
-               "invalid or excessive ruler values cannot escape the supported duration range")
+        suite.expect(abs(landing(from: 900, to: 3060, hertz: 30).seconds - landing(from: 900, to: 3060, hertz: 120).seconds) < 0.1,
+               "the same glide lasts the same time at any frame rate")
+        suite.expect(landing(from: 900, to: 960, hertz: 60).seconds < 0.4
+               && landing(from: 900, to: 3060, hertz: 60).seconds > landing(from: 900, to: 960, hertz: 60).seconds * 2,
+               "one notch settles promptly and a flick coasts for longer")
+        suite.expect(abs(landing(from: 60, to: 70, hertz: 60, step: 10).seconds - landing(from: 60, to: 120, hertz: 60).seconds) < 0.05,
+               "a notch feels the same at any step, since each moves the ruler one tick")
+        var motion = NotchTimerRulerMotion(position: 1200)
+        motion.glide(to: 3600)
+        motion.advance(elapsed: 0.05)
+        let reached = motion.position
+        motion.glide(to: 1800)
+        motion.advance(elapsed: 1.0 / 60)
+        suite.expect(reached > 1200 && motion.position < reached && motion.target == 1800,
+               "turning back drops the rest of the glide and answers on the next frame")
+        motion.place(at: 2550)
+        suite.expect(!motion.isMoving && motion.position == 2550 && motion.target == 2550, "input can take the ruler over mid-glide")
+        motion.glide(to: 2550)
+        suite.expect(!motion.isMoving, "a glide to where the ruler already is ends at once")
+        suite.expect(NotchTimerRulerMotion(position: 2400).thrownMark(velocity: 6000) == 3360
+               && NotchTimerRulerMotion(position: 2400, step: 300).thrownMark(velocity: 0) == 2400
+               && NotchTimerRulerMotion(position: 2400).thrownMark(velocity: .nan) == 2400
+               && NotchTimerRulerMotion(position: 10_200).thrownMark(velocity: 60_000) == 10_800
+               && NotchTimerRulerMotion(position: 60, step: 10).thrownMark(velocity: 100) == 80,
+               "a release lands further the faster it was, on a mark, within the limits")
+        var first = SmoothScrollSupport.Engine()
+        first.add(vertical: 100 * NotchTimerRulerMotion.throwSeconds * Scale.spacing, horizontal: 0)
+        let opening = first.advance(elapsed: 0.001, response: NotchTimerRulerMotion.Feel.thrown.response,
+                                    coast: NotchTimerRulerMotion.Feel.thrown.coast).vertical / 0.001 / Scale.spacing
+        suite.expect(abs(opening - 100) < 2, "a throw's distance makes it continue at the speed of the release")
+
+        var wheel = NotchTimerRulerWheel()
+        suite.expect(wheel.marks(ticks: 1, timestamp: 10, step: 60) == -1 && wheel.marks(ticks: -1, timestamp: 11, step: 60) == 1,
+               "a whole notch moves one mark, with content following the wheel")
+        wheel = NotchTimerRulerWheel()
+        suite.expect(wheel.marks(ticks: 0.4, timestamp: 10, step: 60) == 0 && wheel.marks(ticks: 0.4, timestamp: 10.1, step: 60) == 0
+               && wheel.marks(ticks: 0.4, timestamp: 10.2, step: 60) == -1,
+               "a high-resolution wheel's fractions wait for a whole notch")
+        wheel = NotchTimerRulerWheel()
+        _ = wheel.marks(ticks: 0.9, timestamp: 10, step: 60)
+        suite.expect(wheel.marks(ticks: -0.5, timestamp: 10.1, step: 60) == 0 && wheel.marks(ticks: -0.5, timestamp: 10.2, step: 60) == 1,
+               "turning a high-resolution wheel back drops the fraction left from the other way")
+        wheel = NotchTimerRulerWheel()
+        _ = wheel.marks(ticks: 1, timestamp: 10, step: 60)
+        suite.expect(wheel.marks(ticks: 1, timestamp: 10.025, step: 60) == -3 && wheel.marks(ticks: -1, timestamp: 10.03, step: 60) == 1,
+               "a quick run counts for more, and a reversal starts over at one mark")
+        suite.expect(wheel.marks(ticks: .nan, timestamp: 11, step: 60) == 0 && wheel.marks(ticks: 0, timestamp: 11, step: 60) == 0
+               && wheel.marks(ticks: 1, timestamp: .infinity, step: 60) == 0,
+               "an invalid wheel event moves nothing")
+
+        let usable = [false, true, false, true, true, false]
+        suite.expect(NotchSupport.nextMenuRow(after: nil, by: 1, usable: usable) == 1
+               && NotchSupport.nextMenuRow(after: nil, by: -1, usable: usable) == 4
+               && NotchSupport.nextMenuRow(after: 1, by: 1, usable: usable) == 3
+               && NotchSupport.nextMenuRow(after: 3, by: -1, usable: usable) == 1
+               && NotchSupport.nextMenuRow(after: 1, by: -1, usable: usable) == 1
+               && NotchSupport.nextMenuRow(after: 4, by: 1, usable: usable) == 4
+               && NotchSupport.nextMenuRow(after: nil, by: 1, usable: [false]) == nil,
+               "arrow keys pass over rows that cannot be chosen and stop at the ends of a list")
+
+        var reads = 0
+        var table = RecentSystemShortcuts()
+        let read: () -> [LiveSystemShortcut]? = { reads += 1; return [] }
+        for now in [100.0, 100.5, 101.9] { _ = table.entries(now: now, read: read) }
+        suite.expect(reads == 1, "a burst of preference writes shares one read of the system shortcut table")
+        _ = table.entries(now: 102.1, read: read)
+        _ = table.entries(now: 50, read: read)
+        suite.expect(reads == 3, "the table is read again once it is old, and when the clock goes backwards")
     }
 
     private static func compactTimerContracts(_ suite: TestSuite) {
@@ -1026,7 +1212,7 @@ enum NotchActivityTests {
         var session = NotchTimerSession()
         suite.expect(!NotchTimerSupport.showsActivity(session, in: defaults),
                "only an active session contributes a visible timer activity")
-        session.start(mode: .pomodoro, minutes: 25, now: 0)
+        session.start(mode: .pomodoro, seconds: 1500, now: 0)
         suite.expect(NotchTimerSupport.showsActivity(session, in: defaults), "a running countdown shows by default")
         defaults.set(true, forKey: DefaultsKey.notchHideTimerCountdown)
         suite.expect(!NotchTimerSupport.showsActivity(session, in: defaults)

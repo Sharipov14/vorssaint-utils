@@ -740,18 +740,121 @@ struct NotchMenuItem {
 /// cannot do this: its borderless style turns the label into a pop-up
 /// button title, one line cut with an ellipsis, images moved to the front
 /// and frames ignored, so anything but a lone glyph loses its shape.
+/// A native menu has no height of its own and runs down the screen, so a long
+/// list opens as a popover that scrolls instead.
 struct NotchMenuButton<Label: View>: View {
     let title: String
     let items: [NotchMenuItem]
     var cornerRadius: CGFloat = 6
     @ViewBuilder let label: () -> Label
     @State private var anchor = NotchMenuAnchor()
+    @State private var showsList = false
 
     var body: some View {
-        Button { anchor.popUp(items) } label: { label() }
+        Button {
+            if items.count > NotchMenuList.visibleRows { showsList = true } else { anchor.popUp(items) }
+        } label: { label() }
             .buttonStyle(NotchButtonStyle(cornerRadius: cornerRadius, lifts: false))
             .background(NotchMenuAnchorView(anchor: anchor))
+            .popover(isPresented: $showsList, arrowEdge: .bottom) {
+                NotchMenuList(title: title, items: items) { showsList = false }
+            }
             .accessibilityLabel(title)
+    }
+}
+
+/// A long menu's entries in a list of fixed height, opened at the current one.
+private struct NotchMenuList: View {
+    static let visibleRows = 12
+    private static let rowHeight: CGFloat = 24
+    private static let minimumWidth: CGFloat = 96
+
+    let title: String
+    let items: [NotchMenuItem]
+    let close: () -> Void
+    /// Where the arrow keys have got to; the pointer needs no such mark.
+    @State private var highlighted: Int?
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        ScrollViewReader { scroller in
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(items.indices, id: \.self) { index in
+                        row(index).id(index)
+                    }
+                }
+                .padding(6)
+                .frame(minWidth: Self.minimumWidth)
+            }
+            .frame(height: CGFloat(Self.visibleRows) * Self.rowHeight)
+            .fixedSize(horizontal: true, vertical: false)
+            .focusable()
+            .focused($focused)
+            .focusEffectDisabled()
+            .onKeyPress(.downArrow) { move(by: 1, scroller) }
+            .onKeyPress(.upArrow) { move(by: -1, scroller) }
+            .onKeyPress(.return) { chooseHighlighted() }
+            .onKeyPress(.space) { chooseHighlighted() }
+            .onAppear {
+                focused = true
+                // The list has no rows to scroll to until its first layout is done.
+                DispatchQueue.main.async {
+                    if let current { scroller.scrollTo(current, anchor: .center) }
+                }
+            }
+        }
+        // The island is dark whatever the system is, so its lists are too.
+        .preferredColorScheme(.dark)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(title)
+    }
+
+    private var current: Int? { items.firstIndex(where: \.checked) }
+
+    @ViewBuilder private func row(_ index: Int) -> some View {
+        let item = items[index]
+        if item.isSeparator {
+            Divider().padding(.vertical, 4)
+        } else {
+            Button { choose(item) } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10, weight: .semibold))
+                        .opacity(item.checked ? 1 : 0)
+                    if let symbol = item.symbol { Image(systemName: symbol) }
+                    Text(item.title).font(.system(size: 13)).monospacedDigit().lineLimit(1)
+                    Spacer(minLength: 8)
+                }
+                .padding(.horizontal, 6)
+                .frame(height: Self.rowHeight)
+                .background(.white.opacity(highlighted == index ? 0.14 : 0),
+                            in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            }
+            .buttonStyle(NotchButtonStyle(cornerRadius: 5, lifts: false))
+            .disabled(!item.enabled)
+            .accessibilityAddTraits(item.checked ? .isSelected : [])
+        }
+    }
+
+    private func choose(_ item: NotchMenuItem) {
+        close()
+        item.action()
+    }
+
+    private func move(by delta: Int, _ scroller: ScrollViewProxy) -> KeyPress.Result {
+        let usable = items.map { !$0.isSeparator && $0.enabled }
+        guard let next = NotchSupport.nextMenuRow(after: highlighted ?? current, by: delta, usable: usable) else { return .ignored }
+        highlighted = next
+        scroller.scrollTo(next)
+        return .handled
+    }
+
+    private func chooseHighlighted() -> KeyPress.Result {
+        guard let highlighted else { return .ignored }
+        choose(items[highlighted])
+        return .handled
     }
 }
 
