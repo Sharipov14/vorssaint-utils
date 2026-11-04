@@ -71,6 +71,56 @@ enum AgentActivityTests {
         feed(claudeUser("Try again"))
         feed(claudeAssistant([["type": "text", "text": "API Error: 529"]]).merging(["isApiErrorMessage": true]) { $1 })
         suite.expect(activity.state == .failed, "an API error fails the turn")
+
+        // A turn's start is its first line read; a subagent's file is read as a sidechain.
+        var turn = AgentActivity()
+        let side: [String: Any] = ["isSidechain": true]
+        AgentActivitySupport.applyClaude(claudeUser("Find the bug", extra: ["timestamp": "2027-01-15T08:00:00.000Z"]), to: &turn)
+        var reply = claudeAssistant([["type": "text", "text": "On it"]])
+        reply["timestamp"] = "2027-01-15T08:00:09.000Z"
+        reply["message"] = (reply["message"] as? [String: Any] ?? [:]).merging([
+            "model": "claude-opus-5-5",
+            "usage": ["input_tokens": 2, "cache_creation_input_tokens": 1_000, "cache_read_input_tokens": 60_000, "output_tokens": 300],
+        ]) { $1 }
+        AgentActivitySupport.applyClaude(reply, to: &turn)
+        suite.expect(turn.turnStarted == AgentTimestamp.parse("2027-01-15T08:00:00.000Z") && turn.model == "claude-opus-5-5",
+                     "a turn starts at its prompt's time, and a reply names its model")
+        suite.expect(turn.context == 61_302 && turn.contextWindow == nil, "a reply's usage, cache included, is the context held")
+        var notice = claudeAssistant([["type": "text", "text": "No response requested."]])
+        notice["message"] = (notice["message"] as? [String: Any] ?? [:]).merging([
+            "model": "<synthetic>", "usage": ["input_tokens": 0, "output_tokens": 0],
+        ]) { $1 }
+        AgentActivitySupport.applyClaude(notice, to: &turn)
+        suite.expect(turn.context == 61_302, "Claude's own notices leave the context as it was")
+        AgentActivitySupport.applyClaude(claudeUser("Next", extra: ["timestamp": "2027-01-15T09:00:00.000Z"]), to: &turn)
+        suite.expect(turn.model == "claude-opus-5-5" && turn.turnStarted == AgentTimestamp.parse("2027-01-15T08:00:00.000Z"),
+                     "Claude's own notices name no model, and a prompt during a turn joins it")
+        var report = AgentActivity()
+        AgentActivitySupport.applyClaude(claudeUser("Ask two helpers", extra: ["timestamp": "2027-01-15T08:00:00.000Z"]), to: &report)
+        AgentActivitySupport.applyClaude(claudeAssistant([["type": "text", "text": "Started them"]],
+                                                         stop: "end_turn").merging(["timestamp": "2027-01-15T08:00:03.000Z"]) { $1 },
+                                         to: &report)
+        AgentActivitySupport.applyClaude(claudeUser("<task-notification>a1 done</task-notification>",
+                                                    extra: ["timestamp": "2027-01-15T08:00:20.000Z"]), to: &report)
+        AgentActivitySupport.applyClaude(claudeAssistant([["type": "tool_use", "id": "r1", "name": "Read", "input": ["file_path": "/p/a.swift"]]])
+            .merging(["timestamp": "2027-01-15T08:00:21.000Z"]) { $1 }, to: &report)
+        suite.expect(report.inTurn && report.turnStarted == AgentTimestamp.parse("2027-01-15T08:00:00.000Z"),
+                     "a turn a subagent's report starts belongs to the person's request")
+        AgentActivitySupport.applyClaude(claudeUser("Thanks, next", extra: ["timestamp": "2027-01-15T08:05:00.000Z"]), to: &report)
+        AgentActivitySupport.applyClaude(claudeAssistant([["type": "text", "text": "Sure"]], stop: "end_turn")
+            .merging(["timestamp": "2027-01-15T08:05:02.000Z"]) { $1 }, to: &report)
+        AgentActivitySupport.applyClaude(claudeUser("And this", extra: ["timestamp": "2027-01-15T08:06:00.000Z"]), to: &report)
+        suite.expect(report.turnStarted == AgentTimestamp.parse("2027-01-15T08:06:00.000Z"), "the person's next prompt starts a new request")
+        var sub = AgentActivity()
+        AgentActivitySupport.applyClaude(claudeUser("Look around", extra: side), to: &sub)
+        AgentActivitySupport.applyClaude(claudeUser("Not mine", extra: side), to: &turn)
+        suite.expect(sub.prompt == nil && turn.prompt == "Next", "a session's file skips its subagents' lines")
+        AgentActivitySupport.applyClaude(claudeUser("Look around", extra: side), to: &sub, sidechain: true)
+        AgentActivitySupport.applyClaude(claudeAssistant([["type": "tool_use", "id": "s1", "name": "Grep",
+                                                           "input": ["pattern": "TODO"]]]).merging(side) { $1 },
+                                         to: &sub, sidechain: true)
+        suite.expect(sub.prompt == "Look around" && sub.state == .running && sub.step?.verb == .search,
+                     "a subagent's own file is read for its task and steps")
     }
 
     private static func codex(_ suite: TestSuite) {
@@ -96,6 +146,17 @@ enum AgentActivityTests {
                                "input": "*** Begin Patch\n*** Update File: src/app.ts\n@@\n-a\n+b\n*** End Patch"])
         suite.expect(activity.step == AgentStep(verb: .edit, target: "app.ts"), "a patch shows the first file it touches")
         feed("response_item", ["type": "custom_tool_call_output", "call_id": "c2", "output": "ok"])
+        feed("event_msg", ["type": "token_count", "info": [
+            "total_token_usage": ["input_tokens": 90_000, "output_tokens": 900, "total_tokens": 90_900],
+            "last_token_usage": ["input_tokens": 32_167, "cached_input_tokens": 20_224, "output_tokens": 156, "total_tokens": 32_323],
+            "model_context_window": 272_000,
+        ]])
+        suite.expect(activity.context == 32_323 && activity.contextWindow == 272_000, "Codex names the context held and its window")
+        feed("event_msg", ["type": "token_count", "info": NSNull()])
+        suite.expect(activity.context == 32_323, "a count without its usage keeps the last")
+        suite.expect(AgentFormat.context(32_323, window: nil, locale: Locale(identifier: "en_US")) == "32K"
+                     && AgentFormat.context(68_000, window: 272_000, locale: Locale(identifier: "en_US")) == "68K \u{00B7} 25%",
+                     "the context reads as tokens, with its share where the window is known")
         feed("event_msg", ["type": "task_complete", "last_agent_message": "All tests pass."])
         suite.expect(activity.state == .finished && activity.reply == "All tests pass.", "the turn ends with its last message")
 

@@ -1672,7 +1672,6 @@ def main():
           # The AI agents card's menu rows, each with the indent it has there.
           + "".join(f"struct {name}: View {{\nlet language: AppLanguage\n"
                     + "@State var readout = NotchAgentReadout.elapsed.rawValue\n"
-                    + "@State var finishMinimum = NotchAgentSupport.defaultFinishMinimum\n"
                     + "@State var limitThreshold = NotchAgentSupport.defaultLimitThreshold\n"
                     + "@State var dailyBudget = 0.0\n"
                     + "@State var limitFocus = NotchAgentLimitFocus.mostUsed.rawValue\n"
@@ -1683,7 +1682,6 @@ def main():
                     + "}\n" + (".padding(.leading, settingsRowTextInset)\n" if indented else "") + "}\n}\n"
                     for name, prefix, indented in [
                         ("Readout", '                SettingsMenuRow(symbol: "camera.metering.center.weighted"', True),
-                        ("FinishAfter", '                SettingsMenuRow(symbol: "timer"', True),
                         ("LimitAt", '                SettingsMenuRow(symbol: "gauge.with.dots.needle.67percent"', True),
                         ("Budget", '            SettingsMenuRow(symbol: "dollarsign.circle"', False),
                         ("LimitFocus", '            SettingsMenuRow(symbol: "rectangle.topthird.inset.filled"', False)])

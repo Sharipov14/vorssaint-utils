@@ -49,6 +49,8 @@ final class AgentSessionsService: ObservableObject {
     private var heads: [String: AgentLogCandidate?] = [:]
     /// The Codex logs named by a `codex resume <id>`, found once.
     private var resumed: [String: String?] = [:]
+    /// The last minute of each session's CPU, by session id.
+    private var loads: [String: [Double]] = [:]
 
     private init() {}
 
@@ -63,11 +65,13 @@ final class AgentSessionsService: ObservableObject {
             listeners = []
             listenersRead = .distantPast
             tracked = [:]
-            hosts = [:]
-            projectFolders = [:]
-            activityLogs = [:]
+            // A process's app and a session's folder are checked at every scan,
+            // so they are kept, and a log is read on from where the last
+            // showing left it. Every finished turn shows the sessions too.
+            activityLogs = activityLogs.filter { Self.readsOn($0.key, from: $0.value) }
             heads = [:]
             resumed = [:]
+            loads = [:]
         }
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: Self.tick, leeway: .milliseconds(500))
@@ -237,8 +241,14 @@ final class AgentSessionsService: ObservableObject {
             guard let file = (try? Data(contentsOf: url)).flatMap(AgentSessionsSupport.parseClaudeFile),
                   AgentSessionsSupport.file(file, matches: probe.startedAt) else { continue }
             files[pid] = file
-            subagents[file.sessionId] = workingSubagents(of: file.sessionId, now: now)
+            // The person's latest request, as the last scan read it from the session's log.
+            let request = projectFolder(of: file.sessionId, now: now)
+                .flatMap { activityLogs[$0.appending(path: file.sessionId + ".jsonl").path]?.activity.turnStarted }
+            subagents[file.sessionId] = shownSubagents(of: file.sessionId, request: request, busy: file.working == true || file.asking,
+                                                       since: file.startedAt, now: now)
         }
+        // Kept between showings, so only the sessions running now.
+        projectFolders = projectFolders.filter { id, _ in files.values.contains { $0.sessionId == id } }
 
         if probes.isEmpty && tracked.isEmpty {
             listeners = []
@@ -256,6 +266,12 @@ final class AgentSessionsService: ObservableObject {
             hosts: hosts.compactMapValues { $0.host }, ignoring: ProcessInfo.processInfo.processIdentifier)
         attachActivity(to: &sessions, args: Dictionary(rows.map { ($0.pid, $0.args) }, uniquingKeysWith: { first, _ in first }),
                        files: files, now: now)
+        loads = loads.filter { id, _ in sessions.contains { $0.id == id } }
+        for index in sessions.indices where !sessions[index].isSubagent {
+            let load = AgentSessionsSupport.load(loads[sessions[index].id] ?? [], adding: sessions[index].cpu)
+            loads[sessions[index].id] = load
+            sessions[index].load = load
+        }
         tracked = AgentSessionsSupport.tracking(tracked, sessions: sessions, startedAt: KillProcessService.startTime(for:))
         // A pid reused by something else since is not what was remembered.
         let orphans = AgentSessionsSupport.orphans(tracked: tracked, sessions: sessions, listeners: listeners)
@@ -342,19 +358,30 @@ final class AgentSessionsService: ObservableObject {
         return projectFolders[sessionId]?.folder
     }
 
-    /// Claude keeps a session's subagents under `projects/<folder>/<id>/subagents`.
-    private func workingSubagents(of sessionId: String, now: Date) -> [AgentSubagent] {
+    /// Claude keeps a session's subagents under `projects/<folder>/<id>/subagents`:
+    /// the ones working, and those done in the request running now (see
+    /// `subagentsShown`). One written before the process began, by the same
+    /// session resumed, is not its.
+    private func shownSubagents(of sessionId: String, request: Date?, busy: Bool, since started: Date,
+                                now: Date) -> [AgentSubagent] {
         let fileManager = FileManager.default
         guard let folder = projectFolder(of: sessionId, now: now)?.appending(path: sessionId + "/subagents") else { return [] }
-        let logs = (try? fileManager.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
-        return logs.compactMap { log in
-            guard log.pathExtension == "jsonl",
-                  let written = try? log.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
-                  AgentSessionsSupport.subagentIsWorking(lastActivity: written, now: now) else { return nil }
+        let keys: Set<URLResourceKey> = [.contentModificationDateKey, .creationDateKey]
+        let logs = (try? fileManager.contentsOfDirectory(at: folder, includingPropertiesForKeys: Array(keys))) ?? []
+        // The window is checked before the meta is read, so old ones cost nothing.
+        let since = max(started, min(request ?? now, now.addingTimeInterval(-AgentSessionsSupport.subagentWindow)))
+        let found = logs.compactMap { log -> AgentSubagent? in
+            guard log.pathExtension == "jsonl", let values = try? log.resourceValues(forKeys: keys),
+                  let written = values.contentModificationDate, written >= since else { return nil }
             let name = log.deletingPathExtension().lastPathComponent
-            return (try? Data(contentsOf: folder.appending(path: name + ".meta.json")))
-                .flatMap { AgentSessionsSupport.parseSubagent(meta: $0, id: name, lastActivity: written) }
+            guard var subagent = (try? Data(contentsOf: folder.appending(path: name + ".meta.json")))
+                .flatMap({ AgentSessionsSupport.parseSubagent(meta: $0, id: name, lastActivity: written) }) else { return nil }
+            subagent.started = values.creationDate
+            subagent.log = log.path
+            subagent.working = AgentSessionsSupport.subagentIsWorking(subagent, now: now)
+            return subagent
         }
+        return AgentSessionsSupport.subagentsShown(found, request: request, busy: busy, now: now)
     }
 
     // MARK: Activity
@@ -377,9 +404,17 @@ final class AgentSessionsService: ObservableObject {
         let open = requests.filter { $0.exact == nil }
         logs.merge(AgentActivitySupport.links(requests, candidates: open.isEmpty ? [] : candidates(for: open, now: now))) { $1 }
 
-        let written = Set(logs.values)
+        let written = Set(logs.values).union(sessions.compactMap { $0.isSubagent ? $0.log : nil })
         activityLogs = activityLogs.filter { written.contains($0.key) }
         for index in sessions.indices {
+            // A subagent's own file holds only its lines.
+            if sessions[index].isSubagent, let path = sessions[index].log {
+                var log = activityLogs[path] ?? AgentActivityLog()
+                read(path, kind: .claude, sidechain: true, into: &log)
+                activityLogs[path] = log
+                sessions[index].activity = log.activity
+                continue
+            }
             guard let path = logs[sessions[index].pid], !sessions[index].isSubagent else { continue }
             var log = activityLogs[path] ?? AgentActivityLog()
             if sessions[index].kind == .opencode { readOpenCode(path, into: &log) } else { read(path, kind: sessions[index].kind, into: &log) }
@@ -470,9 +505,17 @@ final class AgentSessionsService: ObservableObject {
         }
     }
 
+    /// A log written on, while nothing showed it, by more than a first look
+    /// reads is read anew from its end; so is OpenCode's database.
+    private static func readsOn(_ path: String, from log: AgentActivityLog) -> Bool {
+        guard !path.contains("#"), let size = (try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? Int64
+        else { return false }
+        return size - log.offset <= Int64(AgentActivitySupport.firstRead)
+    }
+
     /// Reads what was added to a JSON-lines log since the last tick; at first
     /// only its end, which holds the turn running now.
-    private func read(_ path: String, kind: AgentProcessKind, into log: inout AgentActivityLog) {
+    private func read(_ path: String, kind: AgentProcessKind, sidechain: Bool = false, into log: inout AgentActivityLog) {
         guard let handle = FileHandle(forReadingAtPath: path) else { return }
         defer { try? handle.close() }
         guard let size = try? handle.seekToEnd() else { return }
@@ -497,7 +540,7 @@ final class AgentSessionsService: ObservableObject {
         for line in lines {
             guard let object = AgentLogParser.object(line) else { continue }
             switch kind {
-            case .claude: AgentActivitySupport.applyClaude(object, to: &log.activity)
+            case .claude: AgentActivitySupport.applyClaude(object, to: &log.activity, sidechain: sidechain)
             case .codex: AgentActivitySupport.applyCodex(object, to: &log.activity)
             case .copilot: AgentActivitySupport.applyCopilot(object, to: &log.activity)
             default: break

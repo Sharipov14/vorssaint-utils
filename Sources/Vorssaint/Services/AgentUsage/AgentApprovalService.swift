@@ -35,7 +35,7 @@ final class AgentApprovalService: ObservableObject {
     /// On `queue`: each waiting request's transcript, to see it answered elsewhere.
     private var followers: [UUID: TranscriptFollower] = [:]
     /// Sessions whose request was answered on a card: their next finished turn
-    /// is told on one too, however short, wherever their window is.
+    /// is told on one too, wherever their window is.
     private var answered: Set<String> = []
     /// What the first card changed about the island, undone after the last.
     private var opened = false
@@ -279,10 +279,11 @@ final class AgentApprovalService: ObservableObject {
 
     // MARK: Finished turns
 
-    /// A turn Claude or Codex finished, told on a card a moment, its last reply
-    /// and all. `notice` tells it instead where the session's own window is in
-    /// front, where the reply cannot be read, or where the island cannot show
-    /// it: away, or open on something else, which it does not take over.
+    /// A finished turn, told on a card a moment, Claude's or Codex's last
+    /// reply and all. Nothing is told while the session's own window is in
+    /// front, where the person works with it. `notice` tells it instead where
+    /// the reply cannot be read, as for OpenCode and Copilot, or where the
+    /// island cannot show it: away, or open on something else, which it does not take over.
     func finish(_ provider: AgentProvider, log: String, project: String, notice: @escaping () -> Void) {
         // A first look at the running sessions says whose app that is.
         AgentSessionsService.shared.pageDidAppear()
@@ -303,8 +304,8 @@ final class AgentApprovalService: ObservableObject {
             let island = NotchService.shared
             // Answered on a card, the session is followed here, not in its window.
             let here = self?.answered.remove(Self.session(of: log)) != nil
-            guard let self, here || !(session.map(AgentSessionsService.inFront) ?? false),
-                  !island.expanded || island.showsAgentRequests,
+            guard here || !(session.map(AgentSessionsService.inFront) ?? false) else { return }
+            guard let self, !island.expanded || island.showsAgentRequests,
                   let reply = Self.tail(of: log).flatMap({ AgentApprovalSupport.reply(inTail: $0, provider: provider) }) else {
                 return notice()
             }
@@ -333,9 +334,6 @@ final class AgentApprovalService: ObservableObject {
             remove(id)
         }
     }
-
-    /// The log's session had a request answered on a card.
-    func answeredHere(_ log: String) -> Bool { answered.contains(Self.session(of: log)) }
 
     /// Claude names a session's log after it.
     private static func session(of log: String) -> String {

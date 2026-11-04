@@ -63,8 +63,6 @@ struct NotchAgentStrings {
     let readoutLimit: String
     let alerts: String
     let finishAlert: String
-    let finishAfter: String
-    let anyLength: String
     let limitAlert: String
     let limitAt: String
     let budget: String
@@ -154,6 +152,18 @@ struct NotchAgentStrings {
     let ok: String
     /// Leaves the typed answer, back to the picks' own button.
     let cancelTyping: String
+    /// The Live tab's two ways of showing sessions, in the island's top row.
+    let listLayout: String
+    let gridLayout: String
+    let subagentsFormat: String           // + count
+    /// Over a picked session's prompt and latest reply.
+    let recentActions: String
+    /// Opens and closes the list of files a session changed.
+    let showAll: String
+    let showLess: String
+    let changedFilesFormat: String        // + count
+    let costFormat: String                // + amount
+    let contextFormat: String             // + tokens held
 
     func tokens(_ count: String) -> String { String(format: tokensFormat, count) }
     func cached(_ share: String) -> String { String(format: cachedFormat, share) }
@@ -161,6 +171,10 @@ struct NotchAgentStrings {
     func saved(_ amount: String) -> String { String(format: savedFormat, amount) }
     func planMultiple(_ multiple: String, plan: String) -> String { String(format: planMultipleFormat, multiple, plan) }
     func finished(_ agent: String) -> String { String(format: finishedFormat, agent) }
+    func subagents(_ count: Int) -> String { String(format: subagentsFormat, count) }
+    func changedFiles(_ count: Int) -> String { String(format: changedFilesFormat, count) }
+    func cost(_ amount: String) -> String { String(format: costFormat, amount) }
+    func context(_ held: String) -> String { String(format: contextFormat, held) }
     func left(_ share: String) -> String { String(format: leftFormat, share) }
     func usedShare(_ share: String) -> String { String(format: usedFormat, share) }
     func updated(_ when: String) -> String { String(format: updatedFormat, when) }
@@ -186,6 +200,21 @@ struct NotchAgentStrings {
             guard let step = activity.step else { return thinking }
             return [self.step(step.verb), step.target].filter { !$0.isEmpty }.joined(separator: " · ")
         case .finished: return activity.reply.map { done + " · " + $0 } ?? done
+        case .failed: return turnFailed
+        }
+    }
+
+    /// A word for a tile's capsule: the step's verb rather than its target.
+    func state(of session: AgentSession) -> String {
+        if session.status == .asking { return asking }
+        guard let activity = session.activity, let state = activity.state else {
+            return session.background ? background : session.status == .working ? working : waiting
+        }
+        if activity.inTurn && session.kind == .claude && session.status == .waiting { return done }
+        switch state {
+        case .thinking: return thinking
+        case .running: return activity.step.map { step($0.verb) } ?? thinking
+        case .finished: return done
         case .failed: return turnFailed
         }
     }
@@ -335,8 +364,6 @@ extension NotchAgentStrings {
         readoutLimit: "Limit",
         alerts: "Alerts",
         finishAlert: "When a task finishes",
-        finishAfter: "For tasks longer than",
-        anyLength: "Any length",
         limitAlert: "Near a plan limit",
         limitAt: "Warn at",
         budget: "Daily API value budget",
@@ -419,7 +446,16 @@ extension NotchAgentStrings {
         send: "Send",
         next: "Next",
         ok: "OK",
-        cancelTyping: "Cancel")
+        cancelTyping: "Cancel",
+        listLayout: "List",
+        gridLayout: "Tiles",
+        subagentsFormat: "Subagents: %d",
+        recentActions: "Recent actions",
+        showAll: "Show all",
+        showLess: "Show less",
+        changedFilesFormat: "Files changed: %d",
+        costFormat: "Cost: %@",
+        contextFormat: "Context: %@")
 
     static let uk = NotchAgentStrings(
         title: "ШІ-агенти",
@@ -481,8 +517,6 @@ extension NotchAgentStrings {
         readoutLimit: "Ліміт",
         alerts: "Сповіщення",
         finishAlert: "Коли завдання завершено",
-        finishAfter: "Для завдань довших за",
-        anyLength: "Будь-яка тривалість",
         limitAlert: "Поблизу ліміту плану",
         limitAt: "Попереджати при",
         budget: "Денний бюджет вартості API",
@@ -565,7 +599,16 @@ extension NotchAgentStrings {
         send: "Надіслати",
         next: "Далі",
         ok: "OK",
-        cancelTyping: "Скасувати")
+        cancelTyping: "Скасувати",
+        listLayout: "Список",
+        gridLayout: "Плитки",
+        subagentsFormat: "Субагентів: %d",
+        recentActions: "Останні дії",
+        showAll: "Показати все",
+        showLess: "Згорнути",
+        changedFilesFormat: "Змінено файлів: %d",
+        costFormat: "Вартість: %@",
+        contextFormat: "Контекст: %@")
 
     static let ptBR = NotchAgentStrings(
         title: "Agentes de IA",
@@ -627,8 +670,6 @@ extension NotchAgentStrings {
         readoutLimit: "Limite",
         alerts: "Alertas",
         finishAlert: "Quando uma tarefa terminar",
-        finishAfter: "Para tarefas com mais de",
-        anyLength: "Qualquer duração",
         limitAlert: "Perto de um limite do plano",
         limitAt: "Avisar em",
         budget: "Orçamento diário em valor de API",
@@ -711,7 +752,16 @@ extension NotchAgentStrings {
         send: "Enviar",
         next: "Próxima",
         ok: "OK",
-        cancelTyping: "Cancelar")
+        cancelTyping: "Cancelar",
+        listLayout: "Lista",
+        gridLayout: "Blocos",
+        subagentsFormat: "Subagentes: %d",
+        recentActions: "Ações recentes",
+        showAll: "Mostrar tudo",
+        showLess: "Mostrar menos",
+        changedFilesFormat: "Arquivos alterados: %d",
+        costFormat: "Custo: %@",
+        contextFormat: "Contexto: %@")
 
     static let es = NotchAgentStrings(
         title: "Agentes de IA",
@@ -773,8 +823,6 @@ extension NotchAgentStrings {
         readoutLimit: "Límite",
         alerts: "Avisos",
         finishAlert: "Cuando termine una tarea",
-        finishAfter: "Para tareas de más de",
-        anyLength: "Cualquier duración",
         limitAlert: "Cerca de un límite del plan",
         limitAt: "Avisar al",
         budget: "Presupuesto diario en valor de API",
@@ -857,7 +905,16 @@ extension NotchAgentStrings {
         send: "Enviar",
         next: "Siguiente",
         ok: "OK",
-        cancelTyping: "Cancelar")
+        cancelTyping: "Cancelar",
+        listLayout: "Lista",
+        gridLayout: "Mosaico",
+        subagentsFormat: "Subagentes: %d",
+        recentActions: "Acciones recientes",
+        showAll: "Mostrar todo",
+        showLess: "Mostrar menos",
+        changedFilesFormat: "Archivos cambiados: %d",
+        costFormat: "Coste: %@",
+        contextFormat: "Contexto: %@")
 
     static let sk = NotchAgentStrings(
         title: "AI agenti",
@@ -919,8 +976,6 @@ extension NotchAgentStrings {
         readoutLimit: "Limit",
         alerts: "Upozornenia",
         finishAlert: "Keď sa úloha dokončí",
-        finishAfter: "Pri úlohách dlhších ako",
-        anyLength: "Ľubovoľná dĺžka",
         limitAlert: "Blízko limitu plánu",
         limitAt: "Upozorniť pri",
         budget: "Denný rozpočet hodnoty API",
@@ -1003,7 +1058,16 @@ extension NotchAgentStrings {
         send: "Odoslať",
         next: "Ďalej",
         ok: "OK",
-        cancelTyping: "Zrušiť")
+        cancelTyping: "Zrušiť",
+        listLayout: "Zoznam",
+        gridLayout: "Dlaždice",
+        subagentsFormat: "Subagenti: %d",
+        recentActions: "Posledné akcie",
+        showAll: "Zobraziť všetko",
+        showLess: "Zobraziť menej",
+        changedFilesFormat: "Zmenené súbory: %d",
+        costFormat: "Cena: %@",
+        contextFormat: "Kontext: %@")
 
     static let de = NotchAgentStrings(
         title: "KI-Agenten",
@@ -1065,8 +1129,6 @@ extension NotchAgentStrings {
         readoutLimit: "Limit",
         alerts: "Hinweise",
         finishAlert: "Wenn eine Aufgabe fertig ist",
-        finishAfter: "Bei Aufgaben länger als",
-        anyLength: "Jede Dauer",
         limitAlert: "Nahe an einem Planlimit",
         limitAt: "Warnen bei",
         budget: "Tagesbudget für den API-Wert",
@@ -1149,7 +1211,16 @@ extension NotchAgentStrings {
         send: "Senden",
         next: "Weiter",
         ok: "OK",
-        cancelTyping: "Abbrechen")
+        cancelTyping: "Abbrechen",
+        listLayout: "Liste",
+        gridLayout: "Kacheln",
+        subagentsFormat: "Subagenten: %d",
+        recentActions: "Letzte Aktionen",
+        showAll: "Alle zeigen",
+        showLess: "Weniger zeigen",
+        changedFilesFormat: "Geänderte Dateien: %d",
+        costFormat: "Kosten: %@",
+        contextFormat: "Kontext: %@")
 
     static let fr = NotchAgentStrings(
         title: "Agents IA",
@@ -1211,8 +1282,6 @@ extension NotchAgentStrings {
         readoutLimit: "Limite",
         alerts: "Alertes",
         finishAlert: "Quand une tâche se termine",
-        finishAfter: "Pour les tâches de plus de",
-        anyLength: "Toute durée",
         limitAlert: "Près d’une limite du forfait",
         limitAt: "Avertir à",
         budget: "Budget quotidien en valeur API",
@@ -1295,7 +1364,16 @@ extension NotchAgentStrings {
         send: "Envoyer",
         next: "Suivant",
         ok: "OK",
-        cancelTyping: "Annuler")
+        cancelTyping: "Annuler",
+        listLayout: "Liste",
+        gridLayout: "Tuiles",
+        subagentsFormat: "Sous-agents\u{00A0}: %d",
+        recentActions: "Actions récentes",
+        showAll: "Tout afficher",
+        showLess: "Afficher moins",
+        changedFilesFormat: "Fichiers modifiés\u{00A0}: %d",
+        costFormat: "Coût\u{00A0}: %@",
+        contextFormat: "Contexte\u{00A0}: %@")
 
     static let it = NotchAgentStrings(
         title: "Agenti IA",
@@ -1357,8 +1435,6 @@ extension NotchAgentStrings {
         readoutLimit: "Limite",
         alerts: "Avvisi",
         finishAlert: "Quando un’attività finisce",
-        finishAfter: "Per attività più lunghe di",
-        anyLength: "Qualsiasi durata",
         limitAlert: "Vicino a un limite del piano",
         limitAt: "Avvisa al",
         budget: "Budget giornaliero in valore API",
@@ -1441,7 +1517,16 @@ extension NotchAgentStrings {
         send: "Invia",
         next: "Avanti",
         ok: "OK",
-        cancelTyping: "Annulla")
+        cancelTyping: "Annulla",
+        listLayout: "Elenco",
+        gridLayout: "Riquadri",
+        subagentsFormat: "Subagenti: %d",
+        recentActions: "Azioni recenti",
+        showAll: "Mostra tutto",
+        showLess: "Mostra meno",
+        changedFilesFormat: "File modificati: %d",
+        costFormat: "Costo: %@",
+        contextFormat: "Contesto: %@")
 
     static let ru = NotchAgentStrings(
         title: "ИИ-агенты",
@@ -1503,8 +1588,6 @@ extension NotchAgentStrings {
         readoutLimit: "Лимит",
         alerts: "Уведомления",
         finishAlert: "Когда задача завершена",
-        finishAfter: "Для задач дольше",
-        anyLength: "Любой длительности",
         limitAlert: "Около лимита тарифа",
         limitAt: "Предупреждать при",
         budget: "Дневной бюджет по стоимости API",
@@ -1587,7 +1670,16 @@ extension NotchAgentStrings {
         send: "Отправить",
         next: "Далее",
         ok: "OK",
-        cancelTyping: "Отмена")
+        cancelTyping: "Отмена",
+        listLayout: "Список",
+        gridLayout: "Плитки",
+        subagentsFormat: "Субагентов: %d",
+        recentActions: "Последние действия",
+        showAll: "Показать всё",
+        showLess: "Свернуть",
+        changedFilesFormat: "Изменено файлов: %d",
+        costFormat: "Стоимость: %@",
+        contextFormat: "Контекст: %@")
 
     static let tr = NotchAgentStrings(
         title: "YZ Ajanları",
@@ -1649,8 +1741,6 @@ extension NotchAgentStrings {
         readoutLimit: "Sınır",
         alerts: "Uyarılar",
         finishAlert: "Bir görev bittiğinde",
-        finishAfter: "Şundan uzun görevler için",
-        anyLength: "Her süre",
         limitAlert: "Plan sınırına yaklaşınca",
         limitAt: "Uyarı eşiği",
         budget: "Günlük API değeri bütçesi",
@@ -1733,7 +1823,16 @@ extension NotchAgentStrings {
         send: "Gönder",
         next: "İleri",
         ok: "Tamam",
-        cancelTyping: "Vazgeç")
+        cancelTyping: "Vazgeç",
+        listLayout: "Liste",
+        gridLayout: "Kutucuklar",
+        subagentsFormat: "Alt ajanlar: %d",
+        recentActions: "Son eylemler",
+        showAll: "Tümünü göster",
+        showLess: "Daha az göster",
+        changedFilesFormat: "Değişen dosyalar: %d",
+        costFormat: "Maliyet: %@",
+        contextFormat: "Bağlam: %@")
 
     static let ja = NotchAgentStrings(
         title: "AIエージェント",
@@ -1795,8 +1894,6 @@ extension NotchAgentStrings {
         readoutLimit: "上限",
         alerts: "通知",
         finishAlert: "タスクが完了したとき",
-        finishAfter: "対象のタスクの長さ",
-        anyLength: "すべて",
         limitAlert: "プラン上限に近づいたとき",
         limitAt: "通知するしきい値",
         budget: "API換算額の1日の予算",
@@ -1879,7 +1976,16 @@ extension NotchAgentStrings {
         send: "送信",
         next: "次へ",
         ok: "OK",
-        cancelTyping: "キャンセル")
+        cancelTyping: "キャンセル",
+        listLayout: "リスト",
+        gridLayout: "タイル",
+        subagentsFormat: "サブエージェント %d",
+        recentActions: "最近の操作",
+        showAll: "すべて表示",
+        showLess: "表示を減らす",
+        changedFilesFormat: "変更ファイル %d",
+        costFormat: "コスト %@",
+        contextFormat: "コンテキスト %@")
 
     static let ko = NotchAgentStrings(
         title: "AI 에이전트",
@@ -1941,8 +2047,6 @@ extension NotchAgentStrings {
         readoutLimit: "한도",
         alerts: "알림",
         finishAlert: "작업이 끝났을 때",
-        finishAfter: "다음보다 긴 작업",
-        anyLength: "모든 길이",
         limitAlert: "플랜 한도에 가까울 때",
         limitAt: "알림 기준",
         budget: "API 환산 금액 일일 예산",
@@ -2025,7 +2129,16 @@ extension NotchAgentStrings {
         send: "보내기",
         next: "다음",
         ok: "확인",
-        cancelTyping: "취소")
+        cancelTyping: "취소",
+        listLayout: "목록",
+        gridLayout: "타일",
+        subagentsFormat: "하위 에이전트 %d개",
+        recentActions: "최근 작업",
+        showAll: "모두 보기",
+        showLess: "간단히 보기",
+        changedFilesFormat: "변경된 파일 %d개",
+        costFormat: "비용 %@",
+        contextFormat: "컨텍스트 %@")
 
     static let zhHans = NotchAgentStrings(
         title: "AI 智能体",
@@ -2087,8 +2200,6 @@ extension NotchAgentStrings {
         readoutLimit: "额度",
         alerts: "提醒",
         finishAlert: "任务完成时",
-        finishAfter: "任务时长超过",
-        anyLength: "任意时长",
         limitAlert: "接近套餐额度时",
         limitAt: "提醒阈值",
         budget: "每日 API 价值预算",
@@ -2171,7 +2282,16 @@ extension NotchAgentStrings {
         send: "发送",
         next: "下一个",
         ok: "好",
-        cancelTyping: "取消")
+        cancelTyping: "取消",
+        listLayout: "列表",
+        gridLayout: "磁贴",
+        subagentsFormat: "%d 个子代理",
+        recentActions: "最近操作",
+        showAll: "显示全部",
+        showLess: "收起",
+        changedFilesFormat: "已更改 %d 个文件",
+        costFormat: "费用 %@",
+        contextFormat: "上下文 %@")
 
     static let zhTW = NotchAgentStrings(
         title: "AI 代理",
@@ -2233,8 +2353,6 @@ extension NotchAgentStrings {
         readoutLimit: "額度",
         alerts: "提醒",
         finishAlert: "任務完成時",
-        finishAfter: "任務時間超過",
-        anyLength: "任何長度",
         limitAlert: "接近方案額度時",
         limitAt: "提醒門檻",
         budget: "每日 API 價值預算",
@@ -2317,7 +2435,16 @@ extension NotchAgentStrings {
         send: "送出",
         next: "下一個",
         ok: "好",
-        cancelTyping: "取消")
+        cancelTyping: "取消",
+        listLayout: "列表",
+        gridLayout: "方塊",
+        subagentsFormat: "%d 個子代理",
+        recentActions: "最近動作",
+        showAll: "顯示全部",
+        showLess: "收合",
+        changedFilesFormat: "已變更 %d 個檔案",
+        costFormat: "費用 %@",
+        contextFormat: "上下文 %@")
 
     static let zhHK = NotchAgentStrings(
         title: "AI 代理",
@@ -2379,8 +2506,6 @@ extension NotchAgentStrings {
         readoutLimit: "額度",
         alerts: "提示",
         finishAlert: "任務完成時",
-        finishAfter: "任務時間超過",
-        anyLength: "任何長度",
         limitAlert: "接近計劃額度時",
         limitAt: "提示門檻",
         budget: "每日 API 價值預算",
@@ -2463,5 +2588,14 @@ extension NotchAgentStrings {
         send: "送出",
         next: "下一個",
         ok: "好",
-        cancelTyping: "取消")
+        cancelTyping: "取消",
+        listLayout: "列表",
+        gridLayout: "方塊",
+        subagentsFormat: "%d 個子代理",
+        recentActions: "最近動作",
+        showAll: "顯示全部",
+        showLess: "收合",
+        changedFilesFormat: "已更改 %d 個檔案",
+        costFormat: "費用 %@",
+        contextFormat: "上下文 %@")
 }

@@ -50,6 +50,15 @@ struct AgentActivity: Equatable {
     var pending: [String: AgentStep] = [:]
     /// The files the session changed, the latest first; kept across turns.
     var files: [AgentFileDiff] = []
+    /// The model of its latest reply, as the log names it.
+    var model: String?
+    /// When the person's latest request began, by the log's first line of it
+    /// read; a turn the session starts on its own keeps it.
+    var turnStarted: Date?
+    /// Tokens the latest request held with its reply, as the log counts them.
+    var context: Int?
+    /// The model's context window, where the log names it.
+    var contextWindow: Int?
 
     var inTurn: Bool { state == .thinking || state == .running }
 
@@ -59,6 +68,7 @@ struct AgentActivity: Equatable {
         step = nil
         reply = nil
         pending = [:]
+        turnStarted = nil
     }
 
     /// A prompt sent while a turn runs joins it; any other starts one.
@@ -69,7 +79,12 @@ struct AgentActivity: Equatable {
     }
 
     mutating func called(_ id: String, _ step: AgentStep) {
-        if !inTurn { began() }
+        // A turn begun with no prompt, as on a subagent's report, serves the same request.
+        if !inTurn {
+            let request = turnStarted
+            began()
+            turnStarted = request
+        }
         pending[id] = step
         self.step = step
         state = .running
@@ -326,16 +341,19 @@ enum AgentActivitySupport {
 
     /// A line of Claude Code's transcript. Request blobs repeat earlier
     /// messages and subagents write files of their own, so only the session's
-    /// own user and assistant lines count.
-    static func applyClaude(_ object: [String: Any], to activity: inout AgentActivity) {
+    /// own user and assistant lines count; a subagent's file, read as a
+    /// `sidechain`, holds only its own.
+    static func applyClaude(_ object: [String: Any], to activity: inout AgentActivity, sidechain: Bool = false) {
         // Claude notes the prompt again now and then, so a read that starts
         // after it, in a long turn, still knows what was asked.
         if object["type"] as? String == "last-prompt" {
             if let text = prompt(object["lastPrompt"] as? String) { activity.prompt = text }
             return
         }
-        guard object["isSidechain"] as? Bool != true, object["isMeta"] as? Bool != true,
+        guard (object["isSidechain"] as? Bool ?? false) == sidechain, object["isMeta"] as? Bool != true,
               let message = object["message"] as? [String: Any] else { return }
+        let time = (object["timestamp"] as? String).flatMap(AgentTimestamp.parse)
+        defer { if activity.inTurn && activity.turnStarted == nil { activity.turnStarted = time } }
         let items = message["content"] as? [[String: Any]] ?? []
         switch object["type"] as? String {
         case "user":
@@ -365,6 +383,15 @@ enum AgentActivitySupport {
             }
         case "assistant":
             if object["isApiErrorMessage"] as? Bool == true { return activity.ended(failed: true) }
+            // Claude's own notices name a model in angle brackets.
+            if let model = message["model"] as? String, !model.hasPrefix("<") {
+                activity.model = model
+                if let usage = message["usage"] as? [String: Any] {
+                    let held = ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"]
+                        .reduce(0) { $0 + AgentLogParser.int(usage[$1]) }
+                    if held > 0 { activity.context = held }
+                }
+            }
             for item in items {
                 switch item["type"] as? String {
                 case "tool_use":
@@ -419,6 +446,16 @@ enum AgentActivitySupport {
             activity.replied(payload["last_agent_message"] as? String)
             // A turn that broke off still completes, naming its error.
             activity.ended(failed: payload["error"] is [String: Any])
+        case ("event_msg", "token_count"):
+            // The input counts what came from the cache too.
+            let info = payload["info"] as? [String: Any]
+            if let last = info?["last_token_usage"] as? [String: Any] {
+                let total = AgentLogParser.int(last["total_tokens"])
+                let held = total > 0 ? total : AgentLogParser.int(last["input_tokens"]) + AgentLogParser.int(last["output_tokens"])
+                if held > 0 { activity.context = held }
+            }
+            let window = AgentLogParser.int(info?["model_context_window"])
+            if window > 0 { activity.contextWindow = window }
         case ("event_msg", "turn_aborted"):
             activity.ended(failed: false)
         case ("event_msg", "error"):

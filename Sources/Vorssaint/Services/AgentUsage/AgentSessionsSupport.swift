@@ -71,8 +71,22 @@ struct AgentClaudeFile: Equatable {
 /// A Claude subagent that runs inside its parent's process.
 struct AgentSubagent: Equatable {
     let id: String
-    let title: String
+    /// Its type, as `Explore` or `general-purpose`, or else its description.
+    let name: String
+    /// What it was asked to do, in a few words.
+    var task: String?
     let lastActivity: Date
+    /// When its log was begun.
+    var started: Date?
+    /// Claude marked it done or the person stopped it; older versions never mark it.
+    var finished = false
+    /// Started to run in the background: it outlives the turn that started
+    /// it, and Claude marks it done.
+    var background = false
+    /// Its own transcript.
+    var log: String?
+    /// It wrote lately and is not done (see `subagentIsWorking`).
+    var working = true
 }
 
 struct AgentPort: Hashable {
@@ -84,6 +98,9 @@ struct AgentPort: Hashable {
 struct AgentSession: Identifiable, Equatable {
     /// `waiting` is idle; `asking` waits on the person.
     enum Status { case working, waiting, asking }
+    /// What its time and state are colored by: at work, waiting on the
+    /// person, done with its turn, or nothing known either way.
+    enum Tone { case working, asking, done, idle }
 
     let id: String
     let kind: AgentProcessKind
@@ -102,12 +119,73 @@ struct AgentSession: Identifiable, Equatable {
     /// The log it writes, named as the usage reader names its turns.
     var log: String?
     var activity: AgentActivity?
+    /// A subagent's task, under its name.
+    var task: String?
+    /// When a subagent began and, once done, last wrote; its time stops there.
+    var opened: Date?
+    var ended: Date?
+    /// CPU share of the process and its descendants, and the last minute of it.
+    var cpu = 0.0
+    var load: [Double] = []
 
     var isSubagent: Bool { pid == 0 }
     /// No regular app owns it: a daemon, a login item, a detached shell.
     var background: Bool { !isSubagent && host == nil }
-    var started: Date? { identity > 0 ? Date(timeIntervalSince1970: Double(identity) / 1_000_000) : nil }
+    var started: Date? { identity > 0 ? Date(timeIntervalSince1970: Double(identity) / 1_000_000) : opened }
     var folder: String { cwd.map { ($0 as NSString).lastPathComponent } ?? "" }
+}
+
+/// A session on the Live tab with what runs beneath it: its subagents and
+/// the agents it started, in reading order.
+struct AgentSessionGroup: Identifiable, Equatable {
+    let session: AgentSession
+    var children: [AgentSession] = []
+    var id: String { session.id }
+}
+
+/// Which card of the Live tab is open, one at a time, and which of its
+/// subagents shows its details beneath the others.
+struct AgentSessionPicks: Equatable {
+    /// The card the person opened.
+    var card: String?
+    /// Sessions with subagents the person closed; until then the first
+    /// opens on them while no other card is picked.
+    var closed: Set<String> = []
+    /// The subagent picked in the open card.
+    var child: String?
+
+    func open(in groups: [AgentSessionGroup]) -> String? {
+        if let card, groups.contains(where: { $0.id == card }) { return card }
+        return groups.first { !$0.children.isEmpty && !closed.contains($0.id) }?.id
+    }
+
+    func picked(in group: AgentSessionGroup) -> AgentSession? {
+        child.flatMap { child in group.children.first { $0.id == child } }
+    }
+
+    /// Opening a card closes the one open before; closing it leaves all closed.
+    mutating func flip(_ id: String, in groups: [AgentSessionGroup]) {
+        child = nil
+        if open(in: groups) == id {
+            card = nil
+            closed.formUnion(groups.filter { !$0.children.isEmpty }.map(\.id))
+        } else {
+            card = id
+        }
+    }
+
+    /// Picking another subagent moves the details to it; picking it again hides them.
+    mutating func pick(_ id: String) {
+        child = child == id ? nil : id
+    }
+
+    /// Forgets what has gone; a session that lost its subagents opens on them
+    /// again once new ones start.
+    mutating func prune(_ groups: [AgentSessionGroup]) {
+        if let card, !groups.contains(where: { $0.id == card }) { self.card = nil }
+        closed.formIntersection(groups.filter { !$0.children.isEmpty }.map(\.id))
+        if let child, !groups.contains(where: { $0.children.contains { $0.id == child } }) { self.child = nil }
+    }
 }
 
 /// A process that listened under a session that has since ended and still does.
@@ -124,16 +202,36 @@ enum AgentSessionsSupport {
     static let workingCPU = 5.0
     /// A subagent whose log was written this recently is working.
     static let subagentWindow: TimeInterval = 30
+    /// CPU readings kept per session, one a scan: a minute of them.
+    static let loadSamples = 30
     /// Claude's start time and the process's agree to within this.
     static let startTolerance: TimeInterval = 5
 
     // MARK: Recognizing agents
 
-    /// Cheap filter before asking the kernel about a process.
+    /// Cheap filter before asking the kernel about a process. The names are
+    /// lowercase ASCII, so the bytes are compared with their case folded:
+    /// `lowercased()` and `contains` over every row `ps` lists took 9 ms a
+    /// scan, this 0.4 ms. A plain loop, as closures cost 100 times more in
+    /// an unoptimized build.
     static func mayBeAgent(_ args: String) -> Bool {
-        let lowered = args.lowercased()
-        return AgentProcessKind.allCases.contains { lowered.contains($0.rawValue) }
+        var args = args
+        return args.withUTF8 { bytes in
+            agentNames.contains { name in
+                guard bytes.count >= name.count else { return false }
+                var start = 0
+                while start <= bytes.count - name.count {
+                    var matched = 0
+                    while matched < name.count, bytes[start + matched] | 0x20 == name[matched] { matched += 1 }
+                    if matched == name.count { return true }
+                    start += 1
+                }
+                return false
+            }
+        }
     }
+
+    private static let agentNames = AgentProcessKind.allCases.map { Array($0.rawValue.utf8) }
 
     /// The names a process goes by. After an update replaces its binary the
     /// kernel can no longer name the path it runs from, so the name it was
@@ -159,19 +257,27 @@ enum AgentSessionsSupport {
     /// (which may hold spaces, as the Claude app's does) or else its name, and
     /// its arguments, `argv[0]` first. The Claude app's `disclaimer` wrapper
     /// only names the agent among its arguments, so it is not one. Neither are
-    /// Claude's `daemon` and `bg-pty-host` helpers, or the `app-server` and
+    /// Claude's daemon, its workers and pty hosts, the MCP servers and the
+    /// Chrome host Claude runs of itself, or the `app-server` and
     /// `mcp-server` Codex runs for the apps that host it.
     static func kind(executablePath: String?, comm: String = "", argv: [String]) -> AgentProcessKind? {
         guard let (found, rest) = identify(executablePath: executablePath, comm: comm, argv: argv) else { return nil }
         switch found {
-        case .claude where rest.first.map(["daemon", "bg-pty-host"].contains) == true: return nil
+        case .claude where rest.first.map(claudeHelpers.contains) == true: return nil
         case .codex where !Set(rest).isDisjoint(with: ["app-server", "mcp-server"]): return nil
         default: return found
         }
     }
 
-    /// Claude's idle `bg-spare` helpers are sessions only once a session file names them.
-    static func requiresSessionFile(argv: [String]) -> Bool { argv.dropFirst().first == "bg-spare" }
+    /// The first arguments of the Claude processes that are no session.
+    private static let claudeHelpers: Set<String> = ["daemon", "bg-pty-host", "--bg-pty-host", "--daemon-worker",
+                                                     "--claude-in-chrome-mcp", "--chrome-native-host", "--computer-use-mcp"]
+
+    /// Claude's warm `bg-spare` and `--preload` helpers are sessions only once
+    /// a session file names them.
+    static func requiresSessionFile(argv: [String]) -> Bool {
+        argv.dropFirst().first.map(["bg-spare", "--bg-spare", "--preload"].contains) == true
+    }
 
     /// The agent, and the arguments after its binary or script.
     private static func identify(executablePath: String?, comm: String,
@@ -234,6 +340,9 @@ enum AgentSessionsSupport {
     private struct SubagentMetaJSON: Decodable {
         let agentType: String?
         let description: String?
+        let finished: Bool?
+        let stoppedByUser: Bool?
+        let requestShape: String?
     }
 
     static func parseClaudeFile(_ data: Data) -> AgentClaudeFile? {
@@ -246,14 +355,56 @@ enum AgentSessionsSupport {
                                waitingFor: file.waitingFor?.isEmpty == false ? file.waitingFor : nil)
     }
 
+    /// Named by its type and described by its task, or named by the task
+    /// when it has no type.
     static func parseSubagent(meta data: Data, id: String, lastActivity: Date) -> AgentSubagent? {
         guard let meta = try? JSONDecoder().decode(SubagentMetaJSON.self, from: data) else { return nil }
-        let title = [meta.description, meta.agentType].compactMap { $0 }.first { !$0.isEmpty }
-        return title.map { AgentSubagent(id: id, title: $0, lastActivity: lastActivity) }
+        let type = meta.agentType?.isEmpty == false ? meta.agentType : nil
+        let task = meta.description?.isEmpty == false ? meta.description : nil
+        guard let name = type ?? task else { return nil }
+        return AgentSubagent(id: id, name: name, task: type == nil ? nil : task, lastActivity: lastActivity,
+                             finished: meta.finished == true || meta.stoppedByUser == true,
+                             background: meta.requestShape == "background")
     }
 
-    static func subagentIsWorking(lastActivity: Date, now: Date) -> Bool {
-        now.timeIntervalSince(lastActivity) < subagentWindow
+    /// The tone of the word `NotchAgentStrings.state(of:)` gives the session.
+    /// A failed turn, and a session in the background with no log, are neither
+    /// at work nor done.
+    static func tone(of session: AgentSession) -> AgentSession.Tone {
+        if session.status == .asking { return .asking }
+        if session.isSubagent && session.status == .waiting { return .done }
+        guard let activity = session.activity, let state = activity.state else {
+            return session.background ? .idle : session.status == .working ? .working : .done
+        }
+        if activity.inTurn && session.kind == .claude && session.status == .waiting { return .done }
+        switch state {
+        case .thinking, .running: return .working
+        case .finished: return .done
+        case .failed: return .idle
+        }
+    }
+
+    /// One in the background works until Claude marks it done, as it may
+    /// think for long without writing; any other while it writes.
+    static func subagentIsWorking(_ subagent: AgentSubagent, now: Date) -> Bool {
+        !subagent.finished && (subagent.background || now.timeIntervalSince(subagent.lastActivity) < subagentWindow)
+    }
+
+    /// A session's subagents on show: those working and, while the request
+    /// they worked in lasts, those done in it. Subagents in the background
+    /// report back after the turn that started them, so the request lasts
+    /// while the session is busy or any of them still works. `request` is
+    /// when the person's latest request began.
+    static func subagentsShown(_ subagents: [AgentSubagent], request: Date?, busy: Bool, now: Date) -> [AgentSubagent] {
+        let lasts = busy || subagents.contains { subagentIsWorking($0, now: now) }
+        return subagents.filter { subagent in
+            subagentIsWorking(subagent, now: now) || (lasts && request.map { subagent.lastActivity >= $0 } == true)
+        }
+    }
+
+    /// The last minute of a session's CPU, the newest reading last.
+    static func load(_ history: [Double], adding cpu: Double) -> [Double] {
+        Array((history + [cpu]).suffix(loadSamples))
     }
 
     /// A file left by a session that died names a pid that may be alive again
@@ -267,7 +418,7 @@ enum AgentSessionsSupport {
 
     /// The live sessions in reading order: each one's in-process subagents and
     /// then its child sessions, indented beneath it. `subagents` holds only
-    /// the ones working (see `subagentIsWorking`).
+    /// the ones on show (see `subagentsShown`).
     static func sessions(rows: [AgentProcessRow], probes: [Int32: AgentProbe], claudeFiles: [Int32: AgentClaudeFile],
                          subagents: [String: [AgentSubagent]], listeners: [AgentPort], hosts: [Int32: AgentHost],
                          ignoring ignored: Int32?) -> [AgentSession] {
@@ -322,7 +473,7 @@ enum AgentSessionsSupport {
                                 status: file?.asking == true ? .asking : (file?.working ?? (cpu >= workingCPU)) ? .working : .waiting,
                                 memory: Int64(row.rssKB + (launcherMemory[pid] ?? 0)) * 1024,
                                 ports: Array(Set(ports[pid] ?? [])).sorted { ($0.port, $0.pid) < ($1.port, $1.pid) },
-                                host: hosts[pid], waitingFor: file?.waitingFor)
+                                host: hosts[pid], waitingFor: file?.waitingFor, cpu: cpu)
         }
 
         let children = Dictionary(grouping: agents.filter { parent[$0] != nil }, by: { parent[$0]! })
@@ -334,9 +485,11 @@ enum AgentSessionsSupport {
             guard let line = session(pid, depth: depth) else { return }
             result.append(line)
             if let id = claudeFiles[pid].flatMap({ file($0, matches: probes[pid]?.startedAt ?? 0) ? $0.sessionId : nil }) {
-                for sub in (subagents[id] ?? []).sorted(by: { $0.id < $1.id }) {
+                // In the order they began, as the person saw them start.
+                for sub in (subagents[id] ?? []).sorted(by: { ($0.started ?? .distantPast, $0.id) < ($1.started ?? .distantPast, $1.id) }) {
                     result.append(AgentSession(id: "\(line.id).\(sub.id)", kind: .claude, pid: 0, identity: 0, depth: depth + 1,
-                                               title: sub.title, status: .working))
+                                               title: sub.name, status: sub.working ? .working : .waiting, log: sub.log,
+                                               task: sub.task, opened: sub.started, ended: sub.working ? nil : sub.lastActivity))
                 }
             }
             for child in ordered(children[pid] ?? []) { emit(child, depth: depth + 1) }
@@ -348,18 +501,62 @@ enum AgentSessionsSupport {
     // MARK: Card
 
     /// Sessions of the agents the person follows, Hermes having no switch,
-    /// and nothing beneath one they do not.
+    /// and nothing beneath one they do not. Neither is a Claude session no
+    /// app owns that has no transcript yet: Claude keeps such warm ones of
+    /// its own for the next start, and no one has asked them anything.
     static func shown(_ sessions: [AgentSession], providers: [AgentProvider]) -> [AgentSession] {
         var skipping: Int?
         return sessions.filter { session in
             if let depth = skipping, session.depth > depth { return false }
             skipping = nil
-            guard session.kind.provider.map(providers.contains) ?? true else {
+            guard session.kind.provider.map(providers.contains) ?? true,
+                  !(session.kind == .claude && session.background && session.log == nil) else {
                 skipping = session.depth
                 return false
             }
             return true
         }
+    }
+
+    /// Each top session with all beneath it, however deep.
+    static func groups(_ sessions: [AgentSession]) -> [AgentSessionGroup] {
+        var result: [AgentSessionGroup] = []
+        for session in sessions {
+            if session.depth > 0, !result.isEmpty {
+                result[result.count - 1].children.append(session)
+            } else {
+                result.append(AgentSessionGroup(session: session))
+            }
+        }
+        return result
+    }
+
+    /// Tiles `columns` to a row in reading order. A wide one takes a row of
+    /// its own; the row before it, or the last, may be left short.
+    static func rows<Item>(_ items: [Item], columns: Int, wide: (Item) -> Bool) -> [[Item]] {
+        let columns = max(1, columns)
+        var rows: [[Item]] = []
+        var row: [Item] = []
+        for item in items {
+            if wide(item) || columns == 1 {
+                if !row.isEmpty { rows.append(row) }
+                row = []
+                rows.append([item])
+            } else {
+                row.append(item)
+                if row.count == columns {
+                    rows.append(row)
+                    row = []
+                }
+            }
+        }
+        if !row.isEmpty { rows.append(row) }
+        return rows
+    }
+
+    /// As many tiles of at least `minimum` as a row of `width` holds.
+    static func columns(width: CGFloat, minimum: CGFloat, spacing: CGFloat) -> Int {
+        max(1, Int((width + spacing) / (minimum + spacing)))
     }
 
     /// What the Settings preview shows instead of scanning for processes.
@@ -375,10 +572,17 @@ enum AgentSessionsSupport {
                                                      AgentDiffLine(kind: .removed, text: "    var dark = false"),
                                                      AgentDiffLine(kind: .added, text: "    var dark = true"),
                                                      AgentDiffLine(kind: .added, text: "    var toggle = true"),
-                                                 ]])])),
-            AgentSession(id: "1.a", kind: .claude, pid: 0, identity: 0, depth: 1, title: "Explore", status: .working),
+                                                 ]])], context: 68_000),
+                         load: (0..<AgentSessionsSupport.loadSamples).map { 18 + 14 * sin(Double($0) / 3) }),
+            AgentSession(id: "1.a", kind: .claude, pid: 0, identity: 0, depth: 1, title: "Explore", status: .working,
+                         activity: AgentActivity(state: .running, step: AgentStep(verb: .search, target: "TODO"), context: 21_000),
+                         task: "Find the settings code", opened: now.addingTimeInterval(-4 * 60)),
+            AgentSession(id: "1.b", kind: .claude, pid: 0, identity: 0, depth: 1, title: "Plan", status: .waiting,
+                         activity: AgentActivity(state: .finished), task: "Plan the dark mode",
+                         opened: now.addingTimeInterval(-9 * 60), ended: now.addingTimeInterval(-2 * 60)),
             AgentSession(id: "3", kind: .codex, pid: 3, identity: start(52), cwd: "/Users/you/api", status: .waiting,
-                         memory: 230 << 20, host: terminal, activity: AgentActivity(state: .finished)),
+                         memory: 230 << 20, host: terminal, activity: AgentActivity(state: .finished, context: 96_000, contextWindow: 272_000),
+                         load: (0..<AgentSessionsSupport.loadSamples).map { 4 + 3 * cos(Double($0) / 4) }),
             AgentSession(id: "4", kind: .hermes, pid: 4, identity: start(600), cwd: "/Users/you/.hermes", status: .waiting,
                          memory: 120 << 20),
         ]

@@ -198,5 +198,18 @@ enum NotchChatTests {
         suite.expect(NotchChatSupport.blocks("Look\n```\nhalf") == [.text("Look"), .code(language: "", code: "half")]
                         && NotchChatSupport.blocks("") == [],
                      "a fence still streaming is already code")
+        // Typing out, the settled prose is parsed once and joined to the rest.
+        let prose = "Посмотрю **формат**, `код` и [ссылку](https://a.b)! a -> b #12\n\n**Жирный\n\nчерез абзац** и `код\n\nчерез абзац`.\n\nКонец."
+        var typed = "", joined = 0, same = true
+        for character in prose {
+            typed.append(character)
+            guard let end = NotchChatSupport.settledEnd(of: typed) else { continue }
+            let settled = NotchChatSupport.markdown(String(typed[..<end]))
+            guard NotchChatSupport.isClosed(settled) else { continue }
+            joined += 1
+            same = same && settled + NotchChatSupport.markdown(String(typed[end...])) == NotchChatSupport.markdown(typed)
+        }
+        suite.expect(same && joined >= 10 && !NotchChatSupport.isClosed(NotchChatSupport.markdown("**Жирный\n\n")),
+                     "settled prose is joined to the rest only where the whole would read the same")
     }
 }

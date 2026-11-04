@@ -41,6 +41,12 @@ enum NotchAgentReadout: String, CaseIterable, Identifiable {
     var advancesWithClock: Bool { self == .elapsed || self == .limit }
 }
 
+/// How the Live tab shows its sessions.
+enum NotchAgentSessionLayout: String, CaseIterable, Identifiable {
+    case list, grid
+    var id: String { rawValue }
+}
+
 enum NotchAgentLimitDisplay: String, CaseIterable, Identifiable {
     case remaining, used
     var id: String { rawValue }
@@ -64,8 +70,6 @@ struct NotchAgentTile: Identifiable, Equatable {
 }
 
 enum NotchAgentSupport {
-    static let defaultFinishMinimum: TimeInterval = 60
-    static let finishMinimums: [TimeInterval] = [0, 30, 60, 120, 300]
     static let defaultLimitThreshold = 80.0
     static let limitThresholds = [50.0, 75.0, 80.0, 90.0, 95.0]
     static let budgets = [0.0, 5, 10, 25, 50, 100, 250]
@@ -175,11 +179,9 @@ enum NotchAgentSupport {
         NotchAgentReadout(rawValue: defaults.string(forKey: DefaultsKey.notchAgentsReadout) ?? "") ?? .elapsed
     }
 
-    /// The shortest turn worth a notice when it ends; nil while those are off.
-    static func finishMinimum(in defaults: UserDefaults = .standard) -> TimeInterval? {
-        guard defaults.object(forKey: DefaultsKey.notchAgentsFinishAlert) as? Bool ?? true else { return nil }
-        let value = defaults.object(forKey: DefaultsKey.notchAgentsFinishMinimum) as? Double ?? defaultFinishMinimum
-        return value.isFinite ? min(3600, max(0, value)) : defaultFinishMinimum
+    /// Whether a finished turn is told, however short it was.
+    static func announcesFinish(in defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: DefaultsKey.notchAgentsFinishAlert) as? Bool ?? true
     }
 
     /// Percent used that earns a warning; nil while warnings are off.
@@ -397,6 +399,12 @@ enum AgentFormat {
         let digits = value < 10 ? 1 : 0
         let rounded = (value * (digits == 1 ? 10 : 1)).rounded(.down) / (digits == 1 ? 10 : 1)
         return rounded.formatted(.number.precision(.fractionLength(0...digits)).locale(locale))
+    }
+
+    /// The context a session holds: "65K", or "65K · 24%" where its window is known.
+    static func context(_ held: Int, window: Int?, locale: Locale = .autoupdatingCurrent) -> String {
+        guard let window, window > 0 else { return tokens(held, locale: locale) }
+        return tokens(held, locale: locale) + " \u{00B7} " + percent(Double(held) / Double(window), locale: locale)
     }
 
     static func percent(_ fraction: Double, locale: Locale = .autoupdatingCurrent) -> String {

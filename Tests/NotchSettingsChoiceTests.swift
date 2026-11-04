@@ -35,7 +35,6 @@ enum NotchSettingsChoiceTests {
             let agents = FeatureStrings.notchAgents(language)
             let menus: [(String, AnyView, CGFloat)] = [
                 (agents.readout, AnyView(Readout(language: language)), indentedColumn),
-                (agents.finishAfter, AnyView(FinishAfter(language: language)), indentedColumn),
                 (agents.limitAt, AnyView(LimitAt(language: language)), indentedColumn),
                 (agents.budget, AnyView(Budget(language: language)), column),
                 (agents.limitFocus, AnyView(LimitFocus(language: language)), column),

@@ -7,18 +7,12 @@ import Foundation
 /// and an event recorder. No agent logs, network or notification windows.
 enum AgentUsageEventDeliveryTests {
     enum NotchAgentSupport {
-        static var minimum: TimeInterval? = 10
+        static var finishes = true
         static var threshold: Double? = 0.2
         static var budget: Double? = 1
-        static func finishMinimum() -> TimeInterval? { minimum }
+        static func announcesFinish() -> Bool { finishes }
         static func limitThreshold() -> Double? { threshold }
         static func dailyBudget() -> Double? { budget }
-    }
-
-    final class AgentApprovalService {
-        static let shared = AgentApprovalService()
-        var answered: Set<String> = []
-        func answeredHere(_ log: String) -> Bool { answered.contains(log) }
     }
 
     final class Events {
@@ -45,7 +39,7 @@ enum AgentUsageEventDeliveryTests {
             suite.expect(reached, "the agent event fixture drains its delivery queue")
         }
         defer {
-            NotchAgentSupport.minimum = 10
+            NotchAgentSupport.finishes = true
             NotchAgentSupport.threshold = 0.2
             NotchAgentSupport.budget = 1
         }
@@ -85,7 +79,7 @@ enum AgentUsageEventDeliveryTests {
         drain()
         suite.expect(host.events.values.isEmpty, "delivery still respects disabled providers")
         host.providers = [.claude, .codex, .copilot]
-        NotchAgentSupport.minimum = 30
+        NotchAgentSupport.finishes = false
         host.report(finished)
         NotchAgentSupport.threshold = nil
         host.report(events[1])
@@ -93,17 +87,15 @@ enum AgentUsageEventDeliveryTests {
         NotchAgentSupport.budget = nil
         host.report(events[3])
         drain()
-        suite.expect(host.events.values.isEmpty, "duration and disabled-alert preferences still filter current events")
+        suite.expect(host.events.values.isEmpty, "disabled-alert preferences still filter current events")
 
-        // A turn shorter than the minimum, in a session answered in the island.
-        AgentApprovalService.shared.answered = ["main"]
-        defer { AgentApprovalService.shared.answered = [] }
-        host.report(finished)
+        // A turn of a second is news like a long one; the island decides
+        // whether the person is working in its window.
+        NotchAgentSupport.finishes = true
+        let quick = AgentUsageEvent.finished(provider: .claude, duration: 1, cost: 0, tokens: 3,
+                                             project: "example", file: "main")
+        host.report(quick)
         drain()
-        NotchAgentSupport.minimum = nil
-        host.report(finished)
-        drain()
-        suite.expect(host.events.values == [finished],
-                     "a session answered in the island is told of its turn however short, unless finishes are off")
+        suite.expect(host.events.values == [quick], "a finished turn is told however short it was")
     }
 }

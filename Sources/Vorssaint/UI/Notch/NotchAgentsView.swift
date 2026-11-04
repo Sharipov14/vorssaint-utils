@@ -14,6 +14,16 @@ private enum NotchAgentTab: CaseIterable {
         case .chat: return NotchChatView.symbol
         }
     }
+
+    /// Live and Chat slide in from their own side of the row; Statistics,
+    /// between them, only fades.
+    var transition: AnyTransition {
+        switch self {
+        case .live: return .opacity.combined(with: .offset(x: -24))
+        case .stats: return .opacity
+        case .chat: return .opacity.combined(with: .offset(x: 24))
+        }
+    }
 }
 
 /// The AI page: the agents running now, or the cards the person picked,
@@ -29,7 +39,6 @@ struct NotchAgentsView: View {
     @ObservedObject private var l10n = L10n.shared
     @Environment(\.notchSettingsPreview) private var preview
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Namespace private var tabHighlight
     @AppStorage(DefaultsKey.notchAgentsPeriod) private var period = AgentPeriod.today.rawValue
     @AppStorage(DefaultsKey.notchAgentsLimitDisplay) private var display = NotchAgentLimitDisplay.remaining.rawValue
     @AppStorage(DefaultsKey.notchAgentsCardOrder) private var cardOrder = ""
@@ -38,22 +47,24 @@ struct NotchAgentsView: View {
     @AppStorage(DefaultsKey.notchAgentsCodex) private var codex = true
     @AppStorage(DefaultsKey.notchAgentsOpenCode) private var opencode = true
     @AppStorage(DefaultsKey.notchAgentsCopilot) private var copilot = true
-    /// Nil until the person picks one, so each showing opens on the agents running.
+    @AppStorage(DefaultsKey.notchAgentsSessionLayout) private var sessionLayout = NotchAgentSessionLayout.list.rawValue
+    /// The tab picked last, so the page reopens on it until the app quits.
+    @MainActor private static var lastTab = NotchAgentTab.live
+    /// Nil until the person picks one here, so each showing opens on `lastTab`.
     @State private var tab: NotchAgentTab?
     /// A session's changed file, shown in full on the Live tab.
     @State private var openDiff: AgentDiffTarget?
     /// Whether this view has asked the service to scan, which it must undo once.
     @State private var watching = false
+    @Namespace private var tabSelection
+
+    private var tabAnimation: Animation? { reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.88) }
 
     private var text: NotchAgentStrings { FeatureStrings.notchAgents(l10n.language) }
     private var chosenPeriod: AgentPeriod { AgentPeriod(rawValue: period) ?? .today }
     /// Settings, where the cards are arranged, opens on them. A chat left
     /// open is where the page reopens, its conversation still there.
-    private var shownTab: NotchAgentTab {
-        if let tab { return tab }
-        if !preview && chat.isShown { return .chat }
-        return preview ? .stats : .live
-    }
+    private var shownTab: NotchAgentTab { tab ?? (preview ? .stats : Self.lastTab) }
 
     /// The Codex homes the person added, each with a card in the Limits
     /// card's place, so none while that card is hidden.
@@ -98,10 +109,12 @@ struct NotchAgentsView: View {
             if shownTab == .live {
                 NotchAgentSessionsList(size: size, providers: followed, recent: providers, text: text, preview: preview,
                                        diff: $openDiff)
+                    .transition(NotchAgentTab.live.transition)
             } else if shownTab == .chat {
                 NotchChatView(size: size, preview: preview)
+                    .transition(NotchAgentTab.chat.transition)
             } else {
-                statistics
+                statistics.transition(NotchAgentTab.stats.transition)
             }
         }
         .frame(width: size.width, height: size.height, alignment: .top)
@@ -109,15 +122,20 @@ struct NotchAgentsView: View {
         .notchBand(leading: {
             if shownTab == .live, openDiff != nil {
                 NotchBandBackButton(title: text.liveTab) {
-                    withAnimation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.88)) { openDiff = nil }
+                    withAnimation(tabAnimation) { openDiff = nil }
                 }
                 .transition(.opacity)
             } else {
                 tabs.transition(.opacity)
             }
         }, trailing: {
-            if shownTab == .stats && showsPeriod { periodMenu }
-            if shownTab == .chat && !preview { NotchChatBandControls() }
+            if shownTab == .stats && showsPeriod {
+                periodMenu
+            } else if shownTab == .live && openDiff == nil {
+                layoutButtons.transition(.opacity)
+            } else if shownTab == .chat && !preview {
+                NotchChatBandControls()
+            }
         })
         .onAppear {
             usage.pageDidAppear(preview: preview)
@@ -125,11 +143,9 @@ struct NotchAgentsView: View {
             syncSessions()
         }
         .onChange(of: watchesSessions) { _, _ in syncSessions() }
-        // A permission request waits on the Live tab, over whatever was open.
+        // A request takes the island over, so the page comes back without the diff.
         .onChange(of: approvals.pending.count) { before, after in
-            // The Chat tab keeps its place: requests now wait in an island of their own.
-            guard !preview, after > before, !chat.isShown else { return }
-            tab = nil
+            guard !preview, after > before else { return }
             openDiff = nil
         }
         .onDisappear {
@@ -195,7 +211,7 @@ struct NotchAgentsView: View {
                         if current {
                             // Its own id per variant: ViewThatFits may build both.
                             RoundedRectangle(cornerRadius: 9, style: .continuous).fill(.white.opacity(0.14))
-                                .matchedGeometryEffect(id: labeled ? "labeled" : "symbols", in: tabHighlight)
+                                .matchedGeometryEffect(id: labeled ? "labeled" : "symbols", in: tabSelection)
                         }
                     }
                     .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
@@ -206,7 +222,39 @@ struct NotchAgentsView: View {
                 .accessibilityAddTraits(current ? .isSelected : [])
             }
         }
-        .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.82), value: shownTab)
+        // The row is drawn in the island's band, outside this body's transaction.
+        .animation(tabAnimation, value: shownTab)
+        .fixedSize()
+    }
+
+    /// The Live tab's sessions as a list or as tiles.
+    private var layoutButtons: some View {
+        let current = NotchAgentSessionLayout(rawValue: sessionLayout) ?? .list
+        return HStack(spacing: 2) {
+            ForEach(NotchAgentSessionLayout.allCases) { option in
+                let title = option == .list ? text.listLayout : text.gridLayout
+                Button {
+                    withAnimation(tabAnimation) { sessionLayout = option.rawValue }
+                } label: {
+                    Image(systemName: option == .list ? "list.bullet" : "square.grid.2x2")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.white.opacity(option == current ? 0.95 : 0.55))
+                        .frame(width: 28, height: 26)
+                        .background {
+                            if option == current {
+                                RoundedRectangle(cornerRadius: 9, style: .continuous).fill(.white.opacity(0.14))
+                                    .matchedGeometryEffect(id: "layout", in: tabSelection)
+                            }
+                        }
+                        .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                }
+                .buttonStyle(NotchButtonStyle(cornerRadius: 9))
+                .help(title)
+                .accessibilityLabel(title)
+                .accessibilityAddTraits(option == current ? .isSelected : [])
+            }
+        }
+        .animation(tabAnimation, value: sessionLayout)
         .fixedSize()
     }
 
@@ -219,8 +267,9 @@ struct NotchAgentsView: View {
     }
 
     private func pick(_ option: NotchAgentTab) {
-        tab = option
+        withAnimation(tabAnimation) { tab = option }
         guard !preview else { return }
+        Self.lastTab = option
         // The chat page takes the keyboard itself once it shows.
         chat.isShown = option == .chat
     }

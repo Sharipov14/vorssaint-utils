@@ -311,6 +311,7 @@ private struct NotchChatReply: View, Equatable {
     @State private var copied: String?
 
     @State private var showsThinking = false
+    @State private var settled = NotchChatSettledProse()
     private var text: NotchChatStrings { FeatureStrings.notchChat(l10n.language) }
 
     var body: some View {
@@ -433,7 +434,7 @@ private struct NotchChatReply: View, Equatable {
     /// The newest letters come up out of the dark, so the text grows like
     /// writing rather than jumping.
     private func typingText(_ prose: String) -> some View {
-        var shown = Self.markdown(prose)
+        var shown = settled.markdown(prose)
         if !reduceMotion {
             let characters = shown.characters
             var index = characters.endIndex
@@ -501,12 +502,6 @@ private struct NotchChatReply: View, Equatable {
         .buttonStyle(NotchButtonStyle(cornerRadius: 6))
         .accessibilityLabel(strings.copy)
     }
-
-    /// Inline Markdown, line breaks kept; text that does not parse shows as written.
-    static func markdown(_ text: String) -> AttributedString {
-        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
-            ?? AttributedString(text)
-    }
 }
 
 /// Prose as inline Markdown, parsed again only when its text changes, not on
@@ -514,7 +509,27 @@ private struct NotchChatReply: View, Equatable {
 private struct NotchChatProse: View, Equatable {
     let text: String
 
-    var body: some View { Text(NotchChatReply.markdown(text)) }
+    var body: some View { Text(NotchChatSupport.markdown(text)) }
+}
+
+/// The prose typing out, its settled part parsed once rather than on every
+/// frame: a long reply took milliseconds a frame, growing as it went.
+private final class NotchChatSettledProse {
+    private var text = ""
+    /// Nil while something in it is left open: then the whole is parsed.
+    private var parsed: AttributedString?
+
+    func markdown(_ prose: String) -> AttributedString {
+        guard let end = NotchChatSupport.settledEnd(of: prose) else { return NotchChatSupport.markdown(prose) }
+        let settled = String(prose[..<end])
+        if settled != text {
+            text = settled
+            let attributed = NotchChatSupport.markdown(settled)
+            parsed = NotchChatSupport.isClosed(attributed) ? attributed : nil
+        }
+        guard let parsed else { return NotchChatSupport.markdown(prose) }
+        return parsed + NotchChatSupport.markdown(String(prose[end...]))
+    }
 }
 
 /// Three dots in a wave while the reply has not started; still ones under Reduce Motion.

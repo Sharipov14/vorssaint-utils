@@ -10,6 +10,35 @@ enum AgentSessionsTests {
         suite.run("agent sessions: Claude's files") { claudeFiles(suite) }
         suite.run("agent sessions: orphaned ports") { orphans(suite) }
         suite.run("agent sessions: live tab") { liveTab(suite) }
+        suite.run("agent sessions: one card open") { picks(suite) }
+    }
+
+    private static func picks(_ suite: TestSuite) {
+        func session(_ id: String, depth: Int = 0) -> AgentSession {
+            AgentSession(id: id, kind: .claude, pid: depth > 0 ? 0 : 1, identity: 1, depth: depth)
+        }
+        let groups = AgentSessionsSupport.groups([session("a"), session("b"), session("b.1", depth: 1), session("b.2", depth: 1),
+                                                  session("c"), session("c.1", depth: 1)])
+        var picks = AgentSessionPicks()
+        suite.expect(picks.open(in: groups) == "b", "until one is picked, the first session with subagents opens on them")
+        picks.pick("b.1")
+        picks.pick("b.2")
+        suite.expect(picks.picked(in: groups[1])?.id == "b.2", "picking another subagent moves the details to it")
+        picks.pick("b.2")
+        suite.expect(picks.picked(in: groups[1]) == nil, "picking it again hides them")
+        picks.pick("b.1")
+        picks.flip("a", in: groups)
+        suite.expect(picks.open(in: groups) == "a" && picks.child == nil, "opening a card closes the open one and its pick")
+        picks.flip("c", in: groups)
+        suite.expect(picks.open(in: groups) == "c", "one card is open at a time")
+        picks.flip("c", in: groups)
+        suite.expect(picks.open(in: groups) == nil, "closing it leaves all closed, those with subagents too")
+        picks.flip("b", in: groups)
+        picks.prune(Array(groups.dropFirst(2)))
+        suite.expect(picks.card == nil && picks.closed == ["c"], "what has gone is forgotten")
+        picks.prune(AgentSessionsSupport.groups([session("c")]) + [AgentSessionGroup(session: session("d"), children: [session("d.1", depth: 1)])])
+        suite.expect(picks.open(in: AgentSessionsSupport.groups([session("c"), session("c.1", depth: 1)])) == "c",
+                     "a session that lost its subagents opens on new ones")
     }
 
     private static let now = Date(timeIntervalSince1970: 1_800_000_000)
@@ -75,10 +104,17 @@ enum AgentSessionsTests {
                           ["/Users/x/.nvm/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe", "daemon", "run", "--origin", "transient"]) == nil
                         && AgentSessionsSupport.kind(executablePath: nil, comm: "claude", argv: ["claude", "bg-pty-host", "--bg-pty-host", "/tmp/x.pty.sock", "200", "50"]) == nil,
                      "Claude's daemon and pty host are not sessions")
+        let vscode = "/Users/x/.vscode/extensions/anthropic.claude-code-2.1.317-darwin-arm64/resources/native-binary/claude"
+        suite.expect(kind(vscode, [vscode, "--claude-in-chrome-mcp"]) == nil && kind(vscode, [vscode, "--computer-use-mcp"]) == nil
+                        && kind(vscode, [vscode, "--chrome-native-host"]) == nil && kind(vscode, [vscode, "--daemon-worker", "bg"]) == nil
+                        && kind(vscode, [vscode, "--output-format", "stream-json"]) == .claude,
+                     "the MCP servers, Chrome host and daemon workers Claude runs of itself are not sessions")
         suite.expect(AgentSessionsSupport.kind(executablePath: nil, comm: "claude", argv: ["claude", "bg-spare", "--bg-spare", "/tmp/x.claim.sock"]) == .claude
                         && AgentSessionsSupport.requiresSessionFile(argv: ["claude", "bg-spare", "--bg-spare", "/tmp/x"])
+                        && AgentSessionsSupport.requiresSessionFile(argv: [vscode, "--bg-spare", "/tmp/x"])
+                        && AgentSessionsSupport.requiresSessionFile(argv: [vscode, "--preload"])
                         && !AgentSessionsSupport.requiresSessionFile(argv: ["claude", "--continue"]),
-                     "a spare helper is a session only when a session file says so")
+                     "a warm spare is a session only when a session file says so")
         suite.expect(kind("/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
                           ["/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex", "-c", "features.code_mode_host=true", "app-server"]) == nil
                         && kind("/opt/homebrew/bin/node", ["node", "/x/@openai/codex/bin/codex.js", "mcp-server"]) == nil
@@ -99,6 +135,9 @@ enum AgentSessionsTests {
                      "ps rows keep the arguments whole, spaces included")
         suite.expect(AgentSessionsSupport.mayBeAgent("node /x/CODEX.js") && !AgentSessionsSupport.mayBeAgent("/usr/sbin/cfprefsd"),
                      "only processes naming an agent are asked about")
+        suite.expect(["claude", "/opt/bin/Hermes", "x OpenCode y", "copilotx"].allSatisfy(AgentSessionsSupport.mayBeAgent)
+                        && !["", "cl", "codeq", "CL@UDE", "copi lot"].contains(where: AgentSessionsSupport.mayBeAgent),
+                     "an agent's name counts anywhere and in any case, and nothing else does")
 
         let terminal = AgentSessionsSupport.focusScript(bundleID: "com.apple.Terminal", tty: "ttys003")
         let iTerm = AgentSessionsSupport.focusScript(bundleID: "com.googlecode.iterm2", tty: "ttys12")
@@ -185,20 +224,55 @@ enum AgentSessionsTests {
         suite.expect(stale.first?.cwd == "/elsewhere" && stale.first?.status == .waiting && stale.first?.title == nil,
                      "a file left by an older process with the same pid is not trusted")
 
-        let working = AgentSubagent(id: "agent-1", title: "Explore", lastActivity: now.addingTimeInterval(-5))
-        let done = AgentSubagent(id: "agent-2", title: "Old", lastActivity: now.addingTimeInterval(-31))
-        let nested = build(rows, [20: probe(.claude, age: 900)], files: [20: file!], subagents: ["abc-1": [working]])
-        suite.expect(nested.map(\.title) == ["fix tests", "Explore"] && nested[1].isSubagent && nested[1].depth == 1
+        let working = AgentSubagent(id: "agent-1", name: "Explore", task: "Look around", lastActivity: now.addingTimeInterval(-5),
+                                    started: now.addingTimeInterval(-60), log: "/p/agent-1.jsonl")
+        var done = AgentSubagent(id: "agent-2", name: "Plan", lastActivity: now.addingTimeInterval(-31),
+                                 started: now.addingTimeInterval(-300))
+        done.working = false
+        let nested = build(rows, [20: probe(.claude, age: 900)], files: [20: file!], subagents: ["abc-1": [done, working]])
+        suite.expect(nested.map(\.title) == ["fix tests", "Plan", "Explore"] && nested[1].isSubagent && nested[1].depth == 1
                         && nested[1].pid == 0,
-                     "a subagent is listed under its parent, with nothing to kill")
-        suite.expect(AgentSessionsSupport.subagentIsWorking(lastActivity: working.lastActivity, now: now)
-                        && !AgentSessionsSupport.subagentIsWorking(lastActivity: done.lastActivity, now: now),
+                     "subagents are listed under their parent in the order they began, with nothing to kill")
+        suite.expect(nested[2].status == .working && nested[2].task == "Look around" && nested[2].log == "/p/agent-1.jsonl"
+                        && nested[2].started == working.started && nested[2].ended == nil
+                        && nested[1].status == .waiting && nested[1].ended == done.lastActivity,
+                     "a subagent keeps its task, its log and when it began; one done stops its time at its last write")
+        suite.expect(AgentSessionsSupport.subagentIsWorking(working, now: now)
+                        && !AgentSessionsSupport.subagentIsWorking(done, now: now),
                      "only a subagent that wrote in the last 30 seconds is working")
-        let meta = AgentSessionsSupport.parseSubagent(meta: Data(#"{"agentType":"Explore","description":"Look around"}"#.utf8),
+        var marked = working
+        marked.finished = true
+        suite.expect(!AgentSessionsSupport.subagentIsWorking(marked, now: now), "one Claude marked done is done at once")
+        let request = now.addingTimeInterval(-120)
+        func shown(_ subagents: [AgentSubagent], request: Date?, busy: Bool) -> [String] {
+            AgentSessionsSupport.subagentsShown(subagents, request: request, busy: busy, now: now).map(\.id)
+        }
+        suite.expect(shown([done, working], request: request, busy: true) == ["agent-2", "agent-1"]
+                        && shown([done], request: request, busy: false).isEmpty
+                        && shown([done, working], request: now.addingTimeInterval(-20), busy: true) == ["agent-1"]
+                        && shown([working], request: nil, busy: false) == ["agent-1"],
+                     "a subagent done stays until its request ends, one done in an earlier request does not show")
+        var thinking = AgentSubagent(id: "agent-3", name: "general-purpose", lastActivity: now.addingTimeInterval(-90))
+        thinking.background = true
+        suite.expect(AgentSessionsSupport.subagentIsWorking(thinking, now: now)
+                        && shown([done, thinking], request: request, busy: false) == ["agent-2", "agent-3"],
+                     "one in the background works, silent, until marked done, and its request lasts while the session idles")
+        thinking.finished = true
+        suite.expect(shown([done, thinking], request: request, busy: false).isEmpty
+                        && shown([done, thinking], request: request, busy: true) == ["agent-2", "agent-3"],
+                     "once all are done the request ends with the session's turn")
+        let meta = AgentSessionsSupport.parseSubagent(meta: Data(#"{"agentType":"Explore","description":"Look around","finished":true}"#.utf8),
                                                       id: "agent-1", lastActivity: now)
-        suite.expect(meta?.title == "Look around"
-                        && AgentSessionsSupport.parseSubagent(meta: Data(#"{"agentType":"Plan"}"#.utf8), id: "x", lastActivity: now)?.title == "Plan",
-                     "a subagent is named by its description, or else its type")
+        let typeless = AgentSessionsSupport.parseSubagent(meta: Data(#"{"description":"Look around"}"#.utf8), id: "x", lastActivity: now)
+        let background = AgentSessionsSupport.parseSubagent(
+            meta: Data(#"{"agentType":"general-purpose","requestShape":"background","stoppedByUser":true}"#.utf8), id: "x", lastActivity: now)
+        suite.expect(background?.background == true && background?.finished == true && meta?.background == false,
+                     "a subagent knows it runs in the background, and one the person stopped is done")
+        suite.expect(meta?.name == "Explore" && meta?.task == "Look around" && meta?.finished == true
+                        && typeless?.name == "Look around" && typeless?.task == nil
+                        && AgentSessionsSupport.parseSubagent(meta: Data(#"{"agentType":"Plan"}"#.utf8), id: "x", lastActivity: now)?.name == "Plan"
+                        && AgentSessionsSupport.parseSubagent(meta: Data("{}".utf8), id: "x", lastActivity: now) == nil,
+                     "a subagent is named by its type and described by its task, or named by the task")
     }
 
     private static func orphans(_ suite: TestSuite) {
@@ -238,7 +312,7 @@ enum AgentSessionsTests {
                                                       AgentSession(id: "c", kind: .codex, pid: 8, identity: 8)]
         suite.expect(AgentSessionsSupport.shown(mixed, providers: [.codex]).map(\.pid) == [9, 8],
                      "an agent the person stopped following is left out, and Hermes has no switch")
-        let tree = [AgentSession(id: "a", kind: .claude, pid: 1, identity: 1),
+        let tree = [AgentSession(id: "a", kind: .claude, pid: 1, identity: 1, log: "/p/a.jsonl"),
                     AgentSession(id: "b", kind: .codex, pid: 2, identity: 2, depth: 1),
                     AgentSession(id: "c", kind: .claude, pid: 0, identity: 0, depth: 2),
                     AgentSession(id: "d", kind: .codex, pid: 3, identity: 3)]
@@ -246,7 +320,56 @@ enum AgentSessionsTests {
                         && AgentSessionsSupport.shown(tree, providers: [.claude]).map(\.id) == ["a"]
                         && AgentSessionsSupport.shown(tree, providers: [.claude, .codex]).count == 4,
                      "what hangs beneath an agent the person does not follow goes with it")
-        suite.expect(AgentSessionsSupport.sample(now: now).contains { $0.background } && AgentSessionsSupport.sample(now: now).count > 3,
-                     "the Settings preview has example rows, one in the background")
+        let terminal = AgentHost(pid: 50, name: "Terminal")
+        let warm = [AgentSession(id: "w", kind: .claude, pid: 4, identity: 4),
+                    AgentSession(id: "w.mcp", kind: .claude, pid: 5, identity: 5, depth: 1),
+                    AgentSession(id: "t", kind: .claude, pid: 6, identity: 6, host: terminal),
+                    AgentSession(id: "b", kind: .claude, pid: 7, identity: 7, log: "/p/b.jsonl"),
+                    AgentSession(id: "x", kind: .codex, pid: 8, identity: 8)]
+        suite.expect(AgentSessionsSupport.shown(warm, providers: [.claude, .codex]).map(\.id) == ["t", "b", "x"],
+                     "a Claude session no app owns and no one has asked anything yet is left out, with what runs beneath it")
+        suite.expect(AgentSessionsSupport.sample(now: now).contains { $0.background } && AgentSessionsSupport.sample(now: now).count > 3
+                        && AgentSessionsSupport.sample(now: now).contains { $0.isSubagent && $0.task != nil },
+                     "the Settings preview has example rows, one in the background and subagents with tasks")
+
+        let groups = AgentSessionsSupport.groups(tree)
+        suite.expect(groups.map(\.id) == ["a", "d"] && groups[0].children.map(\.id) == ["b", "c"] && groups[1].children.isEmpty,
+                     "each top session takes all beneath it, however deep")
+        suite.expect(AgentSessionsSupport.groups([AgentSession(id: "x", kind: .claude, pid: 0, identity: 0, depth: 1)]).map(\.id) == ["x"],
+                     "a child whose parent is not shown stands on its own")
+        let tiles = AgentSessionsSupport.rows(["a", "b", "W", "c", "d", "e"], columns: 2) { $0 == "W" }
+        suite.expect(tiles == [["a", "b"], ["W"], ["c", "d"], ["e"]]
+                        && AgentSessionsSupport.rows(["a", "W", "b"], columns: 2) { $0 == "W" } == [["a"], ["W"], ["b"]]
+                        && AgentSessionsSupport.rows(["a", "b", "c", "d"], columns: 3) { _ in false } == [["a", "b", "c"], ["d"]]
+                        && AgentSessionsSupport.rows(["a", "b"], columns: 0) { _ in false } == [["a"], ["b"]],
+                     "tiles fill rows in reading order, a wide one on its own row")
+        suite.expect(AgentSessionsSupport.columns(width: 404, minimum: 124, spacing: 6) == 3
+                        && AgentSessionsSupport.columns(width: 300, minimum: 124, spacing: 6) == 2
+                        && AgentSessionsSupport.columns(width: 40, minimum: 124, spacing: 6) == 1,
+                     "a row holds as many tiles as fit, and at least one")
+        var running = AgentActivity()
+        running.state = .running
+        var finished = AgentActivity()
+        finished.state = .finished
+        var failed = AgentActivity()
+        failed.state = .failed
+        let app = AgentHost(pid: 1, name: "Terminal")
+        func tone(_ status: AgentSession.Status, _ activity: AgentActivity?, kind: AgentProcessKind = .claude,
+                  pid: Int32 = 1, host: AgentHost? = app) -> AgentSession.Tone {
+            AgentSessionsSupport.tone(of: AgentSession(id: "s", kind: kind, pid: pid, identity: UInt64(pid), status: status,
+                                                       host: host, activity: activity))
+        }
+        suite.expect(tone(.asking, running) == .asking && tone(.working, running) == .working && tone(.working, finished) == .done
+                        && tone(.waiting, running) == .done && tone(.waiting, running, kind: .codex) == .working
+                        && tone(.waiting, failed) == .idle,
+                     "a session's tone follows the word its state says: asking, at work, or done")
+        suite.expect(tone(.working, nil) == .working && tone(.waiting, nil) == .done && tone(.waiting, nil, host: nil) == .idle
+                        && tone(.working, nil, host: nil) == .idle,
+                     "with no log, a session in an app is done once idle, one in the background says nothing")
+        suite.expect(tone(.waiting, running, pid: 0, host: nil) == .done && tone(.working, running, pid: 0, host: nil) == .working,
+                     "a subagent is done once it stops")
+        let minute = (0..<40).reduce([Double]()) { AgentSessionsSupport.load($0, adding: Double($1)) }
+        suite.expect(minute.count == AgentSessionsSupport.loadSamples && minute.last == 39 && minute.first == 10,
+                     "a session's CPU history keeps its last minute, the newest last")
     }
 }
