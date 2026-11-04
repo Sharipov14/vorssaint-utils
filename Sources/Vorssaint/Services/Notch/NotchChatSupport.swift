@@ -356,4 +356,26 @@ enum NotchChatSupport {
         flush()
         return blocks
     }
+
+    /// Inline Markdown, line breaks kept; text that does not parse shows as written.
+    static func markdown(_ text: String) -> AttributedString {
+        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+            ?? AttributedString(text)
+    }
+
+    /// Where the settled prose of a reply typing out ends: after its last
+    /// blank line. Only what follows changes from frame to frame.
+    static func settledEnd(of prose: String) -> String.Index? {
+        prose.range(of: "\n\n", options: .backwards)?.upperBound
+    }
+
+    /// Settled prose, parsed, reads the same joined to what follows when
+    /// nothing in it was left open. A mark that found no partner stays as
+    /// written, and a later one could still pair with it: bold, a code span
+    /// or a link can run across a blank line here.
+    static func isClosed(_ parsed: AttributedString) -> Bool {
+        !parsed.characters.contains { openMarks.contains($0) }
+    }
+
+    private static let openMarks: Set<Character> = ["*", "_", "`", "~", "[", "]", "<", "\\", "&"]
 }
