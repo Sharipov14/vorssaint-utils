@@ -135,6 +135,9 @@ enum AgentSessionsTests {
                      "ps rows keep the arguments whole, spaces included")
         suite.expect(AgentSessionsSupport.mayBeAgent("node /x/CODEX.js") && !AgentSessionsSupport.mayBeAgent("/usr/sbin/cfprefsd"),
                      "only processes naming an agent are asked about")
+        suite.expect(["claude", "/opt/bin/Hermes", "x OpenCode y", "copilotx"].allSatisfy(AgentSessionsSupport.mayBeAgent)
+                        && !["", "cl", "codeq", "CL@UDE", "copi lot"].contains(where: AgentSessionsSupport.mayBeAgent),
+                     "an agent's name counts anywhere and in any case, and nothing else does")
 
         let terminal = AgentSessionsSupport.focusScript(bundleID: "com.apple.Terminal", tty: "ttys003")
         let iTerm = AgentSessionsSupport.focusScript(bundleID: "com.googlecode.iterm2", tty: "ttys12")

@@ -92,18 +92,16 @@ struct NotchAgentSessionsList: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 6) {
                         if !sessions.isEmpty {
-                            TimelineView(.periodic(from: .now, by: 1)) { context in
-                                NotchAgentSessionCards(sessions: sessions, turns: turns, now: context.date, text: text,
-                                                       preview: preview, width: size.width,
-                                                       layout: NotchAgentSessionLayout(rawValue: layout) ?? .list,
-                                                       picks: $picks) { session, file in
-                                    withAnimation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.88)) {
-                                        diff = AgentDiffTarget(session: session.id, path: file.path)
-                                    }
+                            NotchAgentSessionCards(sessions: sessions, turns: turns, text: text,
+                                                   preview: preview, width: size.width,
+                                                   layout: NotchAgentSessionLayout(rawValue: layout) ?? .list,
+                                                   picks: $picks) { session, file in
+                                withAnimation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.88)) {
+                                    diff = AgentDiffTarget(session: session.id, path: file.path)
                                 }
-                                .id(layout)
-                                .transition(.opacity)
                             }
+                            .id(layout)
+                            .transition(.opacity)
                         }
                         if !orphans.isEmpty { self.orphans }
                     }

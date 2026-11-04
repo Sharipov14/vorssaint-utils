@@ -11,9 +11,12 @@ private let sessionMemory: ByteCountFormatter = {
     return formatter
 }()
 
-/// What every card on the Live tab shares: the clock, the words, and what a tap does.
+/// Every second on the second, so all the Live tab's clocks tick together.
+/// Only the clocks follow it: a card is drawn again when a scan changes it.
+private let everySecond = PeriodicTimelineSchedule(from: Date(timeIntervalSinceReferenceDate: 0), by: 1)
+
+/// What every card on the Live tab shares: the words, and what a tap does.
 private struct NotchAgentSessionContext {
-    let now: Date
     let text: NotchAgentStrings
     let preview: Bool
     let canEnd: Bool
@@ -39,7 +42,6 @@ struct NotchAgentSessionCards: View {
     let sessions: [AgentSession]
     /// The usage turn each log is having, for its model and cost.
     let turns: [String: AgentLiveSession]
-    let now: Date
     let text: NotchAgentStrings
     let preview: Bool
     let width: CGFloat
@@ -59,7 +61,7 @@ struct NotchAgentSessionCards: View {
 
     var body: some View {
         let groups = AgentSessionsSupport.groups(sessions)
-        let context = NotchAgentSessionContext(now: now, text: text, preview: preview, canEnd: canEnd, width: width, turns: turns,
+        let context = NotchAgentSessionContext(text: text, preview: preview, canEnd: canEnd, width: width, turns: turns,
                                                picks: picks, openCard: picks.open(in: groups),
                                                flip: { group in change { picks.flip(group.id, in: groups) } },
                                                pick: { child in change { picks.pick(child.id) } }, open: open)
@@ -189,7 +191,6 @@ private struct NotchAgentSessionPlaque: View {
 /// under it, the context the session holds.
 private struct NotchAgentSessionClock: View {
     let session: AgentSession
-    let now: Date
     let text: NotchAgentStrings
     var size: CGFloat = 13
     /// As wide as the longest usual time, so the dots of a column line up.
@@ -226,7 +227,9 @@ private struct NotchAgentSessionClock: View {
             }
             ZStack(alignment: .trailing) {
                 if reserves { Text("00:00:00").hidden() }
-                Text(session.elapsed(now)).foregroundStyle(session.toneStyle)
+                TimelineView(everySecond) { timeline in
+                    Text(session.elapsed(timeline.date)).foregroundStyle(session.toneStyle)
+                }
             }
             .font(.system(size: size, weight: .semibold))
             .monospacedDigit()
@@ -385,19 +388,22 @@ private struct NotchAgentSessionAccessibility: ViewModifier {
         let text = context.text
         let end = text.endSession(session.kind.displayName + " " + session.shownName)
         let show = session.host.flatMap { session.isSubagent ? nil : text.showIn($0.name) }
-        content
-            .accessibilityLabel([session.kind.displayName,
-                                 session.isSubagent ? "" : session.host?.name ?? text.background, session.shownName,
-                                 session.task ?? "", text.activity(of: session) ?? text.state(of: session)]
-                .filter { !$0.isEmpty }.joined(separator: ", "))
-            .accessibilityValue([session.elapsed(context.now), session.heldContext(locale).map(text.context) ?? ""]
-                .filter { !$0.isEmpty }.joined(separator: ", "))
-            .accessibilityAddTraits(open ? .isSelected : [])
-            // VoiceOver reaches opening and ending without revealing their buttons.
-            .accessibilityActions {
-                if let show, !context.preview { Button(show) { NotchAgentSessionActions.show(session) } }
-                if context.canEnd && !session.isSubagent { Button(end) { AgentSessionsService.shared.kill(session) } }
-            }
+        // The time read out ticks with the clocks; the card under it is not drawn again.
+        TimelineView(everySecond) { timeline in
+            content
+                .accessibilityLabel([session.kind.displayName,
+                                     session.isSubagent ? "" : session.host?.name ?? text.background, session.shownName,
+                                     session.task ?? "", text.activity(of: session) ?? text.state(of: session)]
+                    .filter { !$0.isEmpty }.joined(separator: ", "))
+                .accessibilityValue([session.elapsed(timeline.date), session.heldContext(locale).map(text.context) ?? ""]
+                    .filter { !$0.isEmpty }.joined(separator: ", "))
+                .accessibilityAddTraits(open ? .isSelected : [])
+                // VoiceOver reaches opening and ending without revealing their buttons.
+                .accessibilityActions {
+                    if let show, !context.preview { Button(show) { NotchAgentSessionActions.show(session) } }
+                    if context.canEnd && !session.isSubagent { Button(end) { AgentSessionsService.shared.kill(session) } }
+                }
+        }
     }
 }
 
@@ -670,7 +676,7 @@ private struct NotchAgentListCard: View {
             }
             .frame(minWidth: 62, alignment: .leading)
             divider
-            NotchAgentSessionClock(session: session, now: context.now, text: text)
+            NotchAgentSessionClock(session: session, text: text)
         }
     }
 
@@ -767,7 +773,7 @@ private struct NotchAgentListChild: View {
                     Spacer(minLength: 6)
                     NotchAgentChildStep(session: session, text: context.text)
                         .frame(maxWidth: 120, alignment: .trailing)
-                    NotchAgentSessionClock(session: session, now: context.now, text: context.text, size: 12, reserves: false)
+                    NotchAgentSessionClock(session: session, text: context.text, size: 12, reserves: false)
                 }
             }
             .modifier(NotchAgentSessionAccessibility(session: session, context: context, open: picked))
@@ -892,7 +898,7 @@ private struct NotchAgentSessionTile: View {
                         HStack(alignment: .firstTextBaseline, spacing: 4) {
                             NotchAgentCapsule(title: context.text.state(of: session), tint: session.toneColor ?? .white)
                             Spacer(minLength: 2)
-                            NotchAgentSessionClock(session: session, now: context.now, text: context.text, size: 12, reserves: false)
+                            NotchAgentSessionClock(session: session, text: context.text, size: 12, reserves: false)
                         }
                     }
                 }
@@ -1016,7 +1022,7 @@ private struct NotchAgentWideTile: View {
                 NotchAgentCapsule(title: text.state(of: session), tint: session.toneColor ?? .white)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            NotchAgentSessionClock(session: session, now: context.now, text: text, reserves: false)
+            NotchAgentSessionClock(session: session, text: text, reserves: false)
         }
     }
 
@@ -1093,7 +1099,7 @@ private struct NotchAgentChildTile: View {
                     HStack(alignment: .firstTextBaseline, spacing: 4) {
                         NotchAgentChildStep(session: session, text: context.text, size: 10.5)
                         Spacer(minLength: 2)
-                        NotchAgentSessionClock(session: session, now: context.now, text: context.text, size: 11.5, reserves: false)
+                        NotchAgentSessionClock(session: session, text: context.text, size: 11.5, reserves: false)
                     }
                 }
             }

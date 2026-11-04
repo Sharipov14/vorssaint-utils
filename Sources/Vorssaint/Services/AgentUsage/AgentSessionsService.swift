@@ -65,9 +65,10 @@ final class AgentSessionsService: ObservableObject {
             listeners = []
             listenersRead = .distantPast
             tracked = [:]
-            hosts = [:]
-            projectFolders = [:]
-            activityLogs = [:]
+            // A process's app and a session's folder are checked at every scan,
+            // so they are kept, and a log is read on from where the last
+            // showing left it. Every finished turn shows the sessions too.
+            activityLogs = activityLogs.filter { Self.readsOn($0.key, from: $0.value) }
             heads = [:]
             resumed = [:]
             loads = [:]
@@ -246,6 +247,8 @@ final class AgentSessionsService: ObservableObject {
             subagents[file.sessionId] = shownSubagents(of: file.sessionId, request: request, busy: file.working == true || file.asking,
                                                        since: file.startedAt, now: now)
         }
+        // Kept between showings, so only the sessions running now.
+        projectFolders = projectFolders.filter { id, _ in files.values.contains { $0.sessionId == id } }
 
         if probes.isEmpty && tracked.isEmpty {
             listeners = []
@@ -500,6 +503,14 @@ final class AgentSessionsService: ObservableObject {
                 AgentLogCandidate(path: $0.path, kind: $0.kind, cwd: $0.cwd, created: $0.created, modified: modified)
             }
         }
+    }
+
+    /// A log written on, while nothing showed it, by more than a first look
+    /// reads is read anew from its end; so is OpenCode's database.
+    private static func readsOn(_ path: String, from log: AgentActivityLog) -> Bool {
+        guard !path.contains("#"), let size = (try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? Int64
+        else { return false }
+        return size - log.offset <= Int64(AgentActivitySupport.firstRead)
     }
 
     /// Reads what was added to a JSON-lines log since the last tick; at first
